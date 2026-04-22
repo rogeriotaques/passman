@@ -1,6 +1,29 @@
-# passman
+```
+ ██████╗  █████╗ ███████╗███████╗███╗   ███╗ █████╗ ███╗   ██╗
+ ██╔══██╗██╔══██╗██╔════╝██╔════╝████╗ ████║██╔══██╗████╗  ██║
+ ██████╔╝███████║███████╗███████╗██╔████╔██║███████║██╔██╗ ██║
+ ██╔═══╝ ██╔══██║╚════██║╚════██║██║╚██╔╝██║██╔══██║██║╚██╗██║
+ ██║     ██║  ██║███████║███████║██║ ╚═╝ ██║██║  ██║██║ ╚████║
+ ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
+```
 
 Manage passwords, secrets, and 2FA from your terminal. Store, retrieve, and generate credentials from an encrypted local vault with Git-based sync, shell integration, TOTP, and multi-vault support.
+
+## Why Passman
+
+Most password managers are built for browsers. Passman is built for terminals.
+
+If you deploy from the command line, rotate keys in scripts, or SSH into machines where a GUI doesn't exist, you've probably resorted to `.env` files scattered across directories, secrets hard-coded in shell history, or copy-pasting from a browser extension into a terminal tab. None of that is great.
+
+Passman gives you an encrypted vault that fits into the workflows you already have:
+
+- **Pipe secrets into commands** without exposing them in shell history or process lists: `passman exec prod -- terraform apply`
+- **Source credentials as environment variables** in any shell session: `eval "$(passman env staging)"`
+- **Automate credential rotation** in scripts — generate, store, and retrieve without leaving the terminal
+- **Sync your vault across machines** via Git, with nothing but the encrypted file ever touching the remote
+- **Import your existing credentials** from 1Password, Bitwarden, or `.env` files and keep working from the CLI
+
+It's a single binary with no runtime dependencies, no cloud account, and no browser required. Your secrets stay local, encrypted at rest, and accessible wherever you have a shell.
 
 ## Features
 
