@@ -9,22 +9,9 @@ import (
 )
 
 var configCmd = &cobra.Command{
-	Use:   "config [key] [value]",
+	Use:   "config [[key] value]",
 	Short: "View or update vault configuration",
-	Long: `View or update vault configuration.
-
-  passman config               show all settings
-  passman config auto-sync     show one setting
-  passman config auto-sync on  set a value
-
-Available keys:
-  auto-sync          on/off - automatically sync after writes
-  session-timeout    minutes before cached password expires (default: 15, 0 to disable)`,
-	Example: `  passman config
-  passman config session-timeout
-  passman config session-timeout 30
-  passman config auto-sync on`,
-	Args: cobra.MaximumNArgs(2),
+	Args:  cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		vaultDir := filepath.Dir(app.VaultPath)
 
@@ -52,6 +39,15 @@ Available keys:
 			if err := psync.SaveConfig(vaultDir, cfg); err != nil {
 				return fmt.Errorf("save config: %w", err)
 			}
+
+			if args[0] == "git" {
+				if psync.IsRepo(vaultDir) {
+					if err := psync.SetRemote(vaultDir, args[1]); err != nil {
+						return fmt.Errorf("set git remote: %w", err)
+					}
+				}
+			}
+
 			fmt.Fprintf(app.Out, "%s = %s\n", args[0], args[1])
 		}
 

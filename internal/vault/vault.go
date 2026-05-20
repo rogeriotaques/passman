@@ -4,7 +4,6 @@ import (
 	"errors"
 	"sort"
 	"strings"
-	"time"
 )
 
 var (
@@ -13,14 +12,8 @@ var (
 )
 
 type Entry struct {
-	Name       string    `json:"name"`
-	Username   string    `json:"username"`
-	Password   string    `json:"password"`
-	Notes      string    `json:"notes"`
-	Tags       []string  `json:"tags"`
-	TotpSecret string    `json:"totp_secret,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type Vault struct {
@@ -33,9 +26,6 @@ func (v *Vault) Add(entry Entry) error {
 			return ErrEntryExists
 		}
 	}
-	now := time.Now()
-	entry.CreatedAt = now
-	entry.UpdatedAt = now
 	v.Entries = append(v.Entries, entry)
 	return nil
 }
@@ -47,6 +37,26 @@ func (v *Vault) Get(name string) (*Entry, error) {
 		}
 	}
 	return nil, ErrEntryNotFound
+}
+
+func (v *Vault) Remove(name string) error {
+	for i, e := range v.Entries {
+		if strings.EqualFold(e.Name, name) {
+			v.Entries = append(v.Entries[:i], v.Entries[i+1:]...)
+			return nil
+		}
+	}
+	return ErrEntryNotFound
+}
+
+func (v *Vault) Upsert(entry Entry) {
+	for i, e := range v.Entries {
+		if strings.EqualFold(e.Name, entry.Name) {
+			v.Entries[i] = entry
+			return
+		}
+	}
+	v.Entries = append(v.Entries, entry)
 }
 
 func (v *Vault) List() []string {
@@ -63,13 +73,10 @@ func (v *Vault) Search(query string) []Entry {
 
 	var results []Entry
 	for _, e := range v.Entries {
-		searchable := strings.ToLower(
-			e.Name + " " + e.Username + " " + e.Notes + " " + strings.Join(e.Tags, " "),
-		)
-
+		nameLower := strings.ToLower(e.Name)
 		match := true
 		for _, tok := range tokens {
-			if !strings.Contains(searchable, tok) {
+			if !strings.Contains(nameLower, tok) {
 				match = false
 				break
 			}
@@ -82,27 +89,4 @@ func (v *Vault) Search(query string) []Entry {
 		return strings.ToLower(results[i].Name) < strings.ToLower(results[j].Name)
 	})
 	return results
-}
-
-func (v *Vault) ListByTag(tag string) []Entry {
-	var result []Entry
-	for _, e := range v.Entries {
-		for _, t := range e.Tags {
-			if strings.EqualFold(t, tag) {
-				result = append(result, e)
-				break
-			}
-		}
-	}
-	return result
-}
-
-func (v *Vault) Remove(name string) error {
-	for i, e := range v.Entries {
-		if strings.EqualFold(e.Name, name) {
-			v.Entries = append(v.Entries[:i], v.Entries[i+1:]...)
-			return nil
-		}
-	}
-	return ErrEntryNotFound
 }

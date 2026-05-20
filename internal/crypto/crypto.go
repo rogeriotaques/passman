@@ -45,7 +45,6 @@ func Encrypt(plaintext, key []byte, params KDFParams) (*EncryptedBlob, error) {
 	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
 
 	return &EncryptedBlob{
-		Version:    1,
 		KDF:        params,
 		Nonce:      nonce,
 		Ciphertext: ciphertext,

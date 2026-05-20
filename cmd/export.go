@@ -1,93 +1,178 @@
 package cmd
 
 import (
-	"encoding/csv"
 	"fmt"
+	"os"
+	"os/exec"
+	"regexp"
+	"strings"
 
 	"github.com/rogerio/passman/internal/vault"
 	"github.com/spf13/cobra"
 )
 
 var exportCmd = &cobra.Command{
-	Use:   "export",
-	Short: "Export credentials to external formats",
-	Long:  `Export vault credentials to .env or CSV format. Use a subcommand to choose the format.`,
-}
+	Use:                "export [secret-name] [--eval] [-- command...]",
+	Short:              "Export secrets as environment variables",
+	DisableFlagParsing: true,
+	RunE: func(cmd *cobra.Command, rawArgs []string) error {
+		secretName, evalMode, subCmd := parseExportArgs(rawArgs)
 
-var exportEnvCmd = &cobra.Command{
-	Use:   "env [tag]",
-	Short: "Export as .env format",
-	Long: `Export vault entries as KEY='value' pairs (without export prefix).
-Optionally filter by tag. Output is suitable for writing to a .env file.`,
-	Example: `  passman export env > .env
-  passman export env aws > .env.aws`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		store := &vault.Store{Path: app.VaultPath, KDFParams: app.KDFParams}
+		// Re-parse known flags that were consumed above
+		if err := cmd.Root().PersistentFlags().Parse(extractFlags(rawArgs)); err != nil {
+			return err
+		}
 
-		password, err := getPassword()
+		v, _, password, err := app.loadVault()
 		if err != nil {
 			return err
 		}
 		defer vault.ZeroBytes(password)
 
-		v, err := store.Load(password)
-		if err != nil {
-			return err
+		var entries []vault.Entry
+		if secretName != "" {
+			entries = v.Search(secretName)
+		} else {
+			entries = v.Search("")
 		}
 
-		var entries []vault.Entry
-		if len(args) == 1 {
-			entries = v.ListByTag(args[0])
-		} else {
-			entries = v.Entries
+		if evalMode {
+			return exportEval(entries, subCmd)
 		}
 
 		for _, e := range entries {
-			fmt.Fprintf(app.Out, "%s='%s'\n", toEnvVar(e.Name), shellEscape(e.Password))
+			envName := toEnvVar(e.Name)
+			if envName == "" {
+				continue
+			}
+			fmt.Fprintf(app.Out, "%s='%s'\n", envName, shellEscape(e.Value))
 		}
 		return nil
 	},
 }
 
-var exportCSVCmd = &cobra.Command{
-	Use:   "csv",
-	Short: "Export as CSV",
-	Long: `Export all vault entries as CSV with columns:
-Name, Username, Password, Notes, Tags.`,
-	Example: `  passman export csv > backup.csv`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		store := &vault.Store{Path: app.VaultPath, KDFParams: app.KDFParams}
-
-		password, err := getPassword()
-		if err != nil {
-			return err
+func parseExportArgs(args []string) (secretName string, evalMode bool, subCmd []string) {
+	dashIdx := -1
+	for i, a := range args {
+		if a == "--" {
+			dashIdx = i
+			break
 		}
-		defer vault.ZeroBytes(password)
+	}
 
-		v, err := store.Load(password)
-		if err != nil {
-			return err
-		}
+	var beforeDash []string
+	if dashIdx >= 0 {
+		beforeDash = args[:dashIdx]
+		subCmd = args[dashIdx+1:]
+	} else {
+		beforeDash = args
+	}
 
-		w := csv.NewWriter(app.Out)
-		w.Write([]string{"Name", "Username", "Password", "Notes", "Tags"})
-
-		for _, e := range v.Entries {
-			tags := ""
-			if len(e.Tags) > 0 {
-				tags = fmt.Sprintf("%v", e.Tags)
+	for _, a := range beforeDash {
+		switch {
+		case a == "--eval":
+			evalMode = true
+		case a == "--help" || a == "-h":
+			continue
+		case strings.HasPrefix(a, "--vault") || strings.HasPrefix(a, "-"):
+			continue
+		default:
+			if secretName == "" {
+				secretName = a
 			}
-			w.Write([]string{e.Name, e.Username, e.Password, e.Notes, tags})
 		}
+	}
+	return
+}
 
-		w.Flush()
-		return w.Error()
-	},
+func extractFlags(args []string) []string {
+	var flags []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			break
+		}
+		if args[i] == "--vault" && i+1 < len(args) {
+			flags = append(flags, args[i], args[i+1])
+			i++
+		} else if strings.HasPrefix(args[i], "--vault=") {
+			flags = append(flags, args[i])
+		}
+	}
+	return flags
+}
+
+func exportEval(entries []vault.Entry, command []string) error {
+	injected := make([]string, 0, len(entries))
+	for _, e := range entries {
+		envName := toEnvVar(e.Name)
+		if envName == "" {
+			continue
+		}
+		injected = append(injected, envName+"="+e.Value)
+	}
+
+	env := os.Environ()
+	env = append(env, injected...)
+
+	if len(command) == 0 {
+		for _, kv := range injected {
+			fmt.Fprintf(app.Out, "export %s\n", shellQuoteKV(kv))
+		}
+		return nil
+	}
+
+	child := exec.Command(command[0], command[1:]...)
+	child.Env = env
+	child.Stdin = os.Stdin
+	child.Stdout = app.Out
+	child.Stderr = app.ErrOut
+
+	if err := child.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		return err
+	}
+	return nil
+}
+
+func argsAfterDash(args []string) []string {
+	for i, a := range args {
+		if a == "--" {
+			return args[i+1:]
+		}
+	}
+	return nil
+}
+
+var invalidEnvChars = regexp.MustCompile(`[^A-Z0-9_]`)
+
+func toEnvVar(name string) string {
+	if name == "" {
+		return ""
+	}
+	s := strings.ToUpper(name)
+	s = strings.ReplaceAll(s, "-", "_")
+	s = strings.ReplaceAll(s, " ", "_")
+	s = invalidEnvChars.ReplaceAllString(s, "_")
+	if len(s) > 0 && s[0] >= '0' && s[0] <= '9' {
+		s = "_" + s
+	}
+	return s
+}
+
+func shellEscape(s string) string {
+	return strings.ReplaceAll(s, "'", "'\"'\"'")
+}
+
+func shellQuoteKV(kv string) string {
+	idx := strings.IndexByte(kv, '=')
+	if idx < 0 {
+		return kv
+	}
+	return kv[:idx+1] + "'" + shellEscape(kv[idx+1:]) + "'"
 }
 
 func init() {
-	exportCmd.AddCommand(exportEnvCmd)
-	exportCmd.AddCommand(exportCSVCmd)
 	rootCmd.AddCommand(exportCmd)
 }

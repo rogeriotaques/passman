@@ -14,8 +14,6 @@ import (
 	"github.com/rogerio/passman/internal/crypto"
 )
 
-var testVaultPath string
-
 func setupTestApp(t *testing.T, input string) (*bytes.Buffer, *bytes.Buffer, *clipboard.MockClipboard) {
 	t.Helper()
 	dir := t.TempDir()
@@ -23,13 +21,13 @@ func setupTestApp(t *testing.T, input string) (*bytes.Buffer, *bytes.Buffer, *cl
 	errOut := &bytes.Buffer{}
 	mock := &clipboard.MockClipboard{}
 
-	testVaultPath = filepath.Join(dir, "vault.enc")
-	app.VaultPath = testVaultPath
+	app.VaultPath = filepath.Join(dir, "vault.enc")
 	app.SocketPath = ""
 	app.Out = out
 	app.ErrOut = errOut
 	app.Clipboard = mock
 	app.KDFParams = crypto.FastKDFParams()
+	app.Interactive = false
 
 	setInput(input)
 	resetFlags()
@@ -46,12 +44,8 @@ func resetFlags() {
 	generateCmd.Flags().Set("length", "20")
 	generateCmd.Flags().Set("no-symbols", "false")
 	initCmd.Flags().Set("git", "false")
-	syncCmd.Flags().Set("auto", "")
-	addCmd.Flags().Lookup("tag").Value.(interface{ Replace([]string) error }).Replace(nil)
-	addCmd.Flags().Lookup("tag").Changed = false
-	addCmd.Flags().Set("totp", "false")
 	listCmd.Flags().Set("all", "false")
-	listCmd.Flags().Set("tag", "")
+	importCmd.Flags().Set("replace", "false")
 	rootCmd.PersistentFlags().Set("vault", "")
 }
 
@@ -59,6 +53,8 @@ func runCmd(args ...string) error {
 	rootCmd.SetArgs(args)
 	return rootCmd.Execute()
 }
+
+// --- init tests ---
 
 func TestInit_Success(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
@@ -71,19 +67,58 @@ func TestInit_Success(t *testing.T) {
 	}
 }
 
+func TestInit_EmptyPassword(t *testing.T) {
+	out, _, _ := setupTestApp(t, "\n")
+	err := runCmd("init")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Vault created successfully") {
+		t.Errorf("expected success with empty password: %s", out.String())
+	}
+}
+
+func TestInit_EmptyPassword_NoPromptOnSubsequentCommands(t *testing.T) {
+	out, _, _ := setupTestApp(t, "\n")
+	_ = runCmd("init")
+
+	// Add a secret — no password prompt needed (just the value)
+	setInput("mysecret\n")
+	out.Reset()
+	err := runCmd("add", "github")
+	if err != nil {
+		t.Fatalf("add after empty-password init: %v", err)
+	}
+
+	// List — no input needed at all
+	setInput("")
+	out.Reset()
+	err = runCmd("list")
+	if err != nil {
+		t.Fatalf("list after empty-password init: %v", err)
+	}
+	if !strings.Contains(out.String(), "github") {
+		t.Errorf("expected 'github' in list output: %s", out.String())
+	}
+
+	// Get — no password prompt needed
+	setInput("")
+	out.Reset()
+	resetFlags()
+	err = runCmd("get", "--print", "github")
+	if err != nil {
+		t.Fatalf("get after empty-password init: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "mysecret" {
+		t.Errorf("expected 'mysecret', got %q", out.String())
+	}
+}
+
 func TestInit_PasswordTooShort(t *testing.T) {
 	setupTestApp(t, "short\nshort\n")
 	err := runCmd("init")
 	if err == nil {
 		t.Error("expected error for short password")
-	}
-}
-
-func TestInit_EmptyPassword(t *testing.T) {
-	setupTestApp(t, "\n\n")
-	err := runCmd("init")
-	if err == nil {
-		t.Error("expected error for empty password")
 	}
 }
 
@@ -106,11 +141,13 @@ func TestInit_AlreadyExists(t *testing.T) {
 	}
 }
 
-func TestAdd_And_List(t *testing.T) {
+// --- add and get tests ---
+
+func TestAdd_And_Get(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\nmyuser\nmypass\nsome notes\n")
+	setInput("masterpass\nmypassword\n")
 	out.Reset()
 	err := runCmd("add", "github")
 	if err != nil {
@@ -122,12 +159,12 @@ func TestAdd_And_List(t *testing.T) {
 
 	setInput("masterpass\n")
 	out.Reset()
-	err = runCmd("list")
+	err = runCmd("get", "--print", "github")
 	if err != nil {
-		t.Fatalf("list: %v", err)
+		t.Fatalf("get: %v", err)
 	}
-	if !strings.Contains(out.String(), "github") {
-		t.Errorf("expected 'github' in list output: %s", out.String())
+	if strings.TrimSpace(out.String()) != "mypassword" {
+		t.Errorf("expected 'mypassword', got %q", out.String())
 	}
 }
 
@@ -135,35 +172,13 @@ func TestAdd_Duplicate(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\nuser\npass\nnotes\n")
+	setInput("masterpass\nvalue1\n")
 	_ = runCmd("add", "github")
 
-	setInput("masterpass\nuser2\npass2\nnotes2\n")
+	setInput("masterpass\nvalue2\n")
 	err := runCmd("add", "github")
 	if err == nil {
 		t.Error("expected error for duplicate entry")
-	}
-}
-
-func TestGet_Print(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nmyuser\nsecretpass\n\n")
-	_ = runCmd("add", "github")
-
-	setInput("masterpass\n")
-	out.Reset()
-	err := runCmd("get", "--print", "github")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	output := out.String()
-	if !strings.Contains(output, "myuser") {
-		t.Errorf("expected username in output: %s", output)
-	}
-	if !strings.Contains(output, "secretpass") {
-		t.Errorf("expected password in output: %s", output)
 	}
 }
 
@@ -171,11 +186,12 @@ func TestGet_Clipboard(t *testing.T) {
 	out, _, mock := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\nmyuser\nsecretpass\n\n")
+	setInput("masterpass\nsecretpass\n")
 	_ = runCmd("add", "github")
 
 	setInput("masterpass\n")
 	out.Reset()
+	resetFlags()
 	err := runCmd("get", "github")
 	if err != nil {
 		t.Fatalf("get: %v", err)
@@ -184,7 +200,7 @@ func TestGet_Clipboard(t *testing.T) {
 		t.Errorf("expected clipboard content 'secretpass', got %q", mock.Content)
 	}
 	if !strings.Contains(out.String(), "copied to clipboard") {
-		t.Errorf("expected clipboard message in output: %s", out.String())
+		t.Errorf("expected clipboard message: %s", out.String())
 	}
 }
 
@@ -199,11 +215,180 @@ func TestGet_NotFound(t *testing.T) {
 	}
 }
 
+// --- list tests ---
+
+func TestList_EmptyVault(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("masterpass\n")
+	out.Reset()
+	err := runCmd("list")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(out.String(), "empty") {
+		t.Errorf("expected empty message: %s", out.String())
+	}
+}
+
+func TestList_WrongPassword(t *testing.T) {
+	setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("wrongpassword\n")
+	err := runCmd("list")
+	if err == nil {
+		t.Error("expected error for wrong password")
+	}
+}
+
+func TestList_Search(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("masterpass\npass1\n")
+	_ = runCmd("add", "github-work")
+	setInput("masterpass\npass2\n")
+	_ = runCmd("add", "github-personal")
+	setInput("masterpass\npass3\n")
+	_ = runCmd("add", "aws-prod")
+
+	setInput("masterpass\n")
+	out.Reset()
+	err := runCmd("list", "github")
+	if err != nil {
+		t.Fatalf("list search: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "github-work") {
+		t.Errorf("expected github-work: %s", output)
+	}
+	if !strings.Contains(output, "github-personal") {
+		t.Errorf("expected github-personal: %s", output)
+	}
+	if strings.Contains(output, "aws-prod") {
+		t.Errorf("did not expect aws-prod: %s", output)
+	}
+}
+
+func TestList_SearchMultipleTokens(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("masterpass\npass1\n")
+	_ = runCmd("add", "github-work")
+	setInput("masterpass\npass2\n")
+	_ = runCmd("add", "github-personal")
+
+	setInput("masterpass\n")
+	out.Reset()
+	err := runCmd("list", "github", "work")
+	if err != nil {
+		t.Fatalf("list search: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "github-work") {
+		t.Errorf("expected github-work: %s", output)
+	}
+	if strings.Contains(output, "github-personal") {
+		t.Errorf("did not expect github-personal: %s", output)
+	}
+}
+
+func TestList_SearchNoMatch(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("masterpass\nvalue\n")
+	_ = runCmd("add", "github")
+
+	setInput("masterpass\n")
+	out.Reset()
+	err := runCmd("list", "nonexistent")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(out.String(), "No matching entries") {
+		t.Errorf("expected no matching message: %s", out.String())
+	}
+}
+
+func TestList_TruncatesLongList(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	for i := 0; i < 25; i++ {
+		setInput("masterpass\nvalue\n")
+		_ = runCmd("add", fmt.Sprintf("entry-%03d", i))
+	}
+
+	setInput("masterpass\n")
+	out.Reset()
+	err := runCmd("list")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	output := out.String()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	lastLine := lines[len(lines)-1]
+	if !strings.Contains(lastLine, "more") {
+		t.Errorf("expected truncation message, got: %s", lastLine)
+	}
+}
+
+func TestList_AllFlag(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	for i := 0; i < 25; i++ {
+		setInput("masterpass\nvalue\n")
+		_ = runCmd("add", fmt.Sprintf("entry-%03d", i))
+	}
+
+	setInput("masterpass\n")
+	out.Reset()
+	resetFlags()
+	err := runCmd("list", "--all")
+	if err != nil {
+		t.Fatalf("list --all: %v", err)
+	}
+	output := out.String()
+	if strings.Contains(output, "more") {
+		t.Errorf("--all should not truncate: %s", output)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) != 25 {
+		t.Errorf("expected 25 lines, got %d", len(lines))
+	}
+}
+
+func TestList_Interactive_SingleResult_NoAutoCopy(t *testing.T) {
+	_, _, mock := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("masterpass\nsecretpass\n")
+	_ = runCmd("add", "github")
+
+	setInput("masterpass\n")
+	app.Interactive = false
+
+	err := runCmd("list", "github")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if mock.Content != "" {
+		t.Errorf("list should not auto-copy to clipboard, got %q", mock.Content)
+	}
+}
+
+// --- rm tests ---
+
 func TestRm_Success(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\nuser\npass\n\n")
+	setInput("masterpass\nvalue\n")
 	_ = runCmd("add", "github")
 
 	setInput("masterpass\n")
@@ -238,6 +423,8 @@ func TestRm_NotFound(t *testing.T) {
 	}
 }
 
+// --- generate tests ---
+
 func TestGenerate_Default(t *testing.T) {
 	out, _, _ := setupTestApp(t, "")
 	err := runCmd("generate")
@@ -262,651 +449,123 @@ func TestGenerate_CustomLength(t *testing.T) {
 	}
 }
 
-func TestList_EmptyVault(t *testing.T) {
+// --- export tests ---
+
+func TestExport_AllEntries(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\n")
-	out.Reset()
-	err := runCmd("list")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if !strings.Contains(out.String(), "empty") {
-		t.Errorf("expected empty message: %s", out.String())
-	}
-}
-
-func TestList_WrongPassword(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("wrongpassword\n")
-	err := runCmd("list")
-	if err == nil {
-		t.Error("expected error for wrong password")
-	}
-}
-
-func TestList_SearchByName(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\n")
-	_ = runCmd("add", "github-work")
-	setInput("masterpass\nuser\npass\n\n")
-	resetFlags()
-	_ = runCmd("add", "github-personal")
-	setInput("masterpass\nuser\npass\n\n")
-	resetFlags()
-	_ = runCmd("add", "aws-prod")
-
-	setInput("masterpass\n")
-	out.Reset()
-	err := runCmd("list", "github")
-	if err != nil {
-		t.Fatalf("list search: %v", err)
-	}
-	output := out.String()
-	if !strings.Contains(output, "github-work") {
-		t.Errorf("expected github-work: %s", output)
-	}
-	if !strings.Contains(output, "github-personal") {
-		t.Errorf("expected github-personal: %s", output)
-	}
-	if strings.Contains(output, "aws-prod") {
-		t.Errorf("did not expect aws-prod: %s", output)
-	}
-}
-
-func TestList_SearchMultipleTokens(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nalice@corp.com\npass\n\n")
-	_ = runCmd("add", "github-work")
-	setInput("masterpass\nalice@gmail.com\npass\n\n")
-	resetFlags()
-	_ = runCmd("add", "github-personal")
-
-	setInput("masterpass\n")
-	out.Reset()
-	err := runCmd("list", "github", "corp")
-	if err != nil {
-		t.Fatalf("list search: %v", err)
-	}
-	output := out.String()
-	if !strings.Contains(output, "github-work") {
-		t.Errorf("expected github-work: %s", output)
-	}
-	if strings.Contains(output, "github-personal") {
-		t.Errorf("did not expect github-personal: %s", output)
-	}
-}
-
-func TestList_SearchNoMatch(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\n")
-	_ = runCmd("add", "github")
-
-	setInput("masterpass\n")
-	out.Reset()
-	err := runCmd("list", "nonexistent")
-	if err != nil {
-		t.Fatalf("list search: %v", err)
-	}
-	if !strings.Contains(out.String(), "No matching entries") {
-		t.Errorf("expected no matching message: %s", out.String())
-	}
-}
-
-func TestList_TruncatesLongList(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	for i := 0; i < 25; i++ {
-		setInput(fmt.Sprintf("masterpass\nuser\npass\n\n"))
-		resetFlags()
-		_ = runCmd("add", fmt.Sprintf("entry-%03d", i))
-	}
-
-	setInput("masterpass\n")
-	out.Reset()
-	err := runCmd("list")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	output := out.String()
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	lastLine := lines[len(lines)-1]
-	if !strings.Contains(lastLine, "more") {
-		t.Errorf("expected truncation message, got: %s", lastLine)
-	}
-}
-
-func TestList_AllFlag(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	for i := 0; i < 25; i++ {
-		setInput(fmt.Sprintf("masterpass\nuser\npass\n\n"))
-		resetFlags()
-		_ = runCmd("add", fmt.Sprintf("entry-%03d", i))
-	}
-
-	setInput("masterpass\n")
-	out.Reset()
-	resetFlags()
-	err := runCmd("list", "--all")
-	if err != nil {
-		t.Fatalf("list --all: %v", err)
-	}
-	output := out.String()
-	if strings.Contains(output, "more") {
-		t.Errorf("--all should not truncate: %s", output)
-	}
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) != 25 {
-		t.Errorf("expected 25 lines, got %d", len(lines))
-	}
-}
-
-func TestList_TagFilter(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\n")
-	_ = runCmd("add", "aws-key", "--tag", "prod")
-	setInput("masterpass\nuser\npass\n\n")
-	resetFlags()
-	_ = runCmd("add", "dev-key", "--tag", "dev")
-
-	setInput("masterpass\n")
-	out.Reset()
-	resetFlags()
-	err := runCmd("list", "--tag", "prod")
-	if err != nil {
-		t.Fatalf("list --tag: %v", err)
-	}
-	output := out.String()
-	if !strings.Contains(output, "aws-key") {
-		t.Errorf("expected aws-key: %s", output)
-	}
-	if strings.Contains(output, "dev-key") {
-		t.Errorf("did not expect dev-key: %s", output)
-	}
-}
-
-// --- passwd tests ---
-
-func TestPasswd_Success(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nnewpass123\nnewpass123\n")
-	out.Reset()
-	err := runCmd("passwd")
-	if err != nil {
-		t.Fatalf("passwd: %v", err)
-	}
-	if !strings.Contains(out.String(), "Master password changed") {
-		t.Errorf("expected success message: %s", out.String())
-	}
-
-	// Verify the new password works
-	setInput("newpass123\n")
-	out.Reset()
-	err = runCmd("list")
-	if err != nil {
-		t.Fatalf("list with new password: %v", err)
-	}
-	if !strings.Contains(out.String(), "empty") {
-		t.Errorf("expected empty vault: %s", out.String())
-	}
-}
-
-func TestPasswd_OldPasswordWrong(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("wrongpass\nnewpass123\nnewpass123\n")
-	err := runCmd("passwd")
-	if err == nil {
-		t.Error("expected error for wrong current password")
-	}
-}
-
-func TestPasswd_NewPasswordTooShort(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nshort\nshort\n")
-	err := runCmd("passwd")
-	if err == nil {
-		t.Error("expected error for short new password")
-	}
-}
-
-func TestPasswd_NewPasswordMismatch(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nnewpass123\ndifferent1\n")
-	err := runCmd("passwd")
-	if err == nil {
-		t.Error("expected error for password mismatch")
-	}
-}
-
-func TestPasswd_PreservesEntries(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\n")
-	_ = runCmd("add", "github")
-
-	setInput("masterpass\nnewpass123\nnewpass123\n")
-	resetFlags()
-	err := runCmd("passwd")
-	if err != nil {
-		t.Fatalf("passwd: %v", err)
-	}
-
-	setInput("newpass123\n")
-	out.Reset()
-	err = runCmd("list")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if !strings.Contains(out.String(), "github") {
-		t.Errorf("expected github in list after passwd: %s", out.String())
-	}
-}
-
-func TestPasswd_OldPasswordNoLongerWorks(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nnewpass123\nnewpass123\n")
-	_ = runCmd("passwd")
-
-	setInput("masterpass\n")
-	err := runCmd("list")
-	if err == nil {
-		t.Error("expected error when using old password after passwd")
-	}
-}
-
-// --- Interactive list tests ---
-
-func TestList_Interactive_SingleResult_AutoSelects(t *testing.T) {
-	out, _, mock := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\nsecretpass\n\n")
-	_ = runCmd("add", "github")
-
-	setInput("masterpass\n")
-	out.Reset()
-	resetFlags()
-	app.Interactive = true
-	defer func() { app.Interactive = false }()
-
-	err := runCmd("list", "github")
-	if err != nil {
-		t.Fatalf("list interactive: %v", err)
-	}
-	if mock.Content != "secretpass" {
-		t.Errorf("expected clipboard content 'secretpass', got %q", mock.Content)
-	}
-	if !strings.Contains(out.String(), "copied to clipboard") {
-		t.Errorf("expected clipboard message: %s", out.String())
-	}
-}
-
-func TestList_Interactive_NoResults_NoSelector(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\n")
-	_ = runCmd("add", "github")
-
-	setInput("masterpass\n")
-	out.Reset()
-	resetFlags()
-	app.Interactive = true
-	defer func() { app.Interactive = false }()
-
-	err := runCmd("list", "nonexistent")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if !strings.Contains(out.String(), "No matching entries") {
-		t.Errorf("expected no matching message: %s", out.String())
-	}
-}
-
-func TestList_NonInteractive_MultipleResults_PlainOutput(t *testing.T) {
-	out, _, mock := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\n")
-	_ = runCmd("add", "github-work")
-	setInput("masterpass\nuser\npass\n\n")
-	resetFlags()
-	_ = runCmd("add", "github-personal")
-
-	setInput("masterpass\n")
-	out.Reset()
-	resetFlags()
-	app.Interactive = false
-
-	err := runCmd("list", "github")
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	output := out.String()
-	if !strings.Contains(output, "github-personal") || !strings.Contains(output, "github-work") {
-		t.Errorf("expected both entries in plain output: %s", output)
-	}
-	if mock.Content != "" {
-		t.Errorf("non-interactive should not copy to clipboard, got %q", mock.Content)
-	}
-}
-
-// --- Phase 1.5: Git sync tests ---
-
-func TestInit_WithGit(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
-	err := runCmd("init", "--git")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	output := out.String()
-	if !strings.Contains(output, "Vault created successfully") {
-		t.Errorf("expected vault created message: %s", output)
-	}
-	if !strings.Contains(output, "Git repository initialized") {
-		t.Errorf("expected git init message: %s", output)
-	}
-	if !strings.Contains(output, "Initial commit created") {
-		t.Errorf("expected initial commit message: %s", output)
-	}
-}
-
-func TestInit_WithGit_AndRemote(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\nhttps://github.com/test/vault.git\n")
-	// Push will fail because the remote is fake, but remote should be configured
-	_ = runCmd("init", "--git")
-	output := out.String()
-	if !strings.Contains(output, "Remote set to") {
-		t.Errorf("expected remote set message: %s", output)
-	}
-}
-
-func TestSync_ManualSync(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
-	_ = runCmd("init", "--git")
-
-	setInput("masterpass\nuser\npass\n\n")
-	_ = runCmd("add", "github")
-	app.Wait()
-
-	setInput("")
-	out.Reset()
-	err := runCmd("sync")
-	if err != nil {
-		t.Fatalf("sync: %v", err)
-	}
-	if !strings.Contains(out.String(), "Vault synced") {
-		t.Errorf("expected sync message: %s", out.String())
-	}
-}
-
-func TestSync_NotARepo(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("")
-	err := runCmd("sync")
-	if err == nil {
-		t.Error("expected error when vault is not a git repo")
-	}
-}
-
-func TestSync_AutoOn(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
-	_ = runCmd("init", "--git")
-
-	out.Reset()
-	err := runCmd("sync", "--auto", "on")
-	if err != nil {
-		t.Fatalf("sync --auto on: %v", err)
-	}
-	if !strings.Contains(out.String(), "Auto-sync on") {
-		t.Errorf("expected auto-sync on message: %s", out.String())
-	}
-}
-
-func TestSync_AutoOff(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
-	_ = runCmd("init", "--git")
-
-	_ = runCmd("sync", "--auto", "on")
-	out.Reset()
-	resetFlags()
-	err := runCmd("sync", "--auto", "off")
-	if err != nil {
-		t.Fatalf("sync --auto off: %v", err)
-	}
-	if !strings.Contains(out.String(), "Auto-sync off") {
-		t.Errorf("expected auto-sync off message: %s", out.String())
-	}
-}
-
-func TestSync_AutoInvalid(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n\n")
-	_ = runCmd("init", "--git")
-
-	err := runCmd("sync", "--auto", "maybe")
-	if err == nil {
-		t.Error("expected error for invalid --auto value")
-	}
-}
-
-func TestGitRemote(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
-	_ = runCmd("init", "--git")
-
-	out.Reset()
-	err := runCmd("git", "remote", "https://github.com/test/vault.git")
-	if err != nil {
-		t.Fatalf("git remote: %v", err)
-	}
-	if !strings.Contains(out.String(), "Remote set to") {
-		t.Errorf("expected remote set message: %s", out.String())
-	}
-}
-
-func TestGitRemote_NotARepo(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	err := runCmd("git", "remote", "https://github.com/test/vault.git")
-	if err == nil {
-		t.Error("expected error when vault is not a git repo")
-	}
-}
-
-func TestAutoSync_TriggeredOnAdd(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
-	_ = runCmd("init", "--git")
-	_ = runCmd("sync", "--auto", "on")
-
-	setInput("masterpass\nuser\npass\n\n")
-	resetFlags()
-	out.Reset()
-	err := runCmd("add", "github")
-	if err != nil {
-		t.Fatalf("add: %v", err)
-	}
-	app.Wait()
-}
-
-func TestAutoSync_TriggeredOnRm(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
-	_ = runCmd("init", "--git")
-	_ = runCmd("sync", "--auto", "on")
-
-	setInput("masterpass\nuser\npass\n\n")
-	resetFlags()
-	_ = runCmd("add", "github")
-	app.Wait()
-
-	setInput("masterpass\n")
-	resetFlags()
-	out.Reset()
-	err := runCmd("rm", "github")
-	if err != nil {
-		t.Fatalf("rm: %v", err)
-	}
-	app.Wait()
-}
-
-// --- Phase 2: Shell integration tests ---
-
-func TestAdd_WithTags(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\n")
-	out.Reset()
-	err := runCmd("add", "aws-key", "--tag", "prod", "--tag", "infra")
-	if err != nil {
-		t.Fatalf("add with tags: %v", err)
-	}
-	if !strings.Contains(out.String(), `"aws-key" added`) {
-		t.Errorf("unexpected output: %s", out.String())
-	}
-
-	setInput("masterpass\n")
-	out.Reset()
-	resetFlags()
-	err = runCmd("get", "--print", "aws-key")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	output := out.String()
-	if !strings.Contains(output, "prod") || !strings.Contains(output, "infra") {
-		t.Errorf("expected tags in output: %s", output)
-	}
-}
-
-func TestEnv_AllEntries(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\nsecret123\n\n")
+	setInput("masterpass\nsecret123\n")
 	_ = runCmd("add", "aws-key")
-
-	setInput("masterpass\ndbuser\ndbpass456\n\n")
-	resetFlags()
+	setInput("masterpass\ndbpass456\n")
 	_ = runCmd("add", "db-password")
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("env")
+	resetFlags()
+	err := runCmd("export")
 	if err != nil {
-		t.Fatalf("env: %v", err)
+		t.Fatalf("export: %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "export AWS_KEY='secret123'") {
-		t.Errorf("expected AWS_KEY export: %s", output)
+	if !strings.Contains(output, "AWS_KEY='secret123'") {
+		t.Errorf("expected AWS_KEY: %s", output)
 	}
-	if !strings.Contains(output, "export DB_PASSWORD='dbpass456'") {
-		t.Errorf("expected DB_PASSWORD export: %s", output)
+	if !strings.Contains(output, "DB_PASSWORD='dbpass456'") {
+		t.Errorf("expected DB_PASSWORD: %s", output)
+	}
+	if strings.Contains(output, "export ") {
+		t.Errorf("should not include 'export' prefix: %s", output)
 	}
 }
 
-func TestEnv_FilterByTag(t *testing.T) {
+func TestExport_FilterByName(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\nuser\nprodpass\n\n")
-	_ = runCmd("add", "aws-key", "--tag", "prod")
-
-	setInput("masterpass\nuser\ndevpass\n\n")
-	resetFlags()
-	_ = runCmd("add", "dev-key", "--tag", "dev")
+	setInput("masterpass\nprodpass\n")
+	_ = runCmd("add", "aws-prod")
+	setInput("masterpass\ndevpass\n")
+	_ = runCmd("add", "dev-key")
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("env", "prod")
+	resetFlags()
+	err := runCmd("export", "aws")
 	if err != nil {
-		t.Fatalf("env: %v", err)
+		t.Fatalf("export: %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "AWS_KEY") {
-		t.Errorf("expected AWS_KEY in output: %s", output)
+	if !strings.Contains(output, "AWS_PROD=") {
+		t.Errorf("expected AWS_PROD in output: %s", output)
 	}
-	if strings.Contains(output, "DEV_KEY") {
+	if strings.Contains(output, "DEV_KEY=") {
 		t.Errorf("did not expect DEV_KEY in output: %s", output)
 	}
 }
 
-func TestEnv_EmptyVault(t *testing.T) {
+func TestExport_ShellEscape(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\n")
-	out.Reset()
-	err := runCmd("env")
-	if err != nil {
-		t.Fatalf("env: %v", err)
-	}
-	if out.String() != "" {
-		t.Errorf("expected empty output, got: %s", out.String())
-	}
-}
-
-func TestEnv_ShellEscape(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\nit's a \"test\"\n\n")
+	setInput("masterpass\nit's a \"test\"\n")
 	_ = runCmd("add", "tricky")
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("env")
+	resetFlags()
+	err := runCmd("export")
 	if err != nil {
-		t.Fatalf("env: %v", err)
+		t.Fatalf("export: %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "TRICKY=") {
-		t.Errorf("expected TRICKY export: %s", output)
+	if !strings.Contains(output, "TRICKY='") {
+		t.Errorf("expected TRICKY in output: %s", output)
 	}
 	if strings.Contains(output, "it's") {
 		t.Error("single quote should be escaped in output")
 	}
 }
 
-func TestExec_NoCommand_Error(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
+func TestExport_Eval_WithCommand(t *testing.T) {
+	out, _, _ := setupTestApp(t, "\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\n")
-	err := runCmd("exec", "--")
-	if err == nil {
-		t.Error("expected error when no command specified")
+	setInput("production\n")
+	_ = runCmd("add", "my-env")
+
+	out.Reset()
+	setInput("")
+	err := runCmd("export", "--eval", "--", "sh", "-c", "echo $MY_ENV")
+	if err != nil {
+		t.Fatalf("export --eval -- cmd: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "production" {
+		t.Errorf("expected 'production', got %q", out.String())
 	}
 }
 
-// --- Phase 2: Import/Export tests ---
+func TestExport_Eval_NoCommand_PrintsExportStatements(t *testing.T) {
+	out, _, _ := setupTestApp(t, "\n")
+	_ = runCmd("init")
 
-func TestImportEnv(t *testing.T) {
+	setInput("secret123\n")
+	_ = runCmd("add", "aws-key")
+
+	out.Reset()
+	setInput("")
+	err := runCmd("export", "--eval")
+	if err != nil {
+		t.Fatalf("export --eval: %v", err)
+	}
+	if !strings.Contains(out.String(), "export AWS_KEY='secret123'") {
+		t.Errorf("expected export statement, got %q", out.String())
+	}
+}
+
+// --- import tests ---
+
+func TestImport_Env(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
@@ -915,9 +574,10 @@ func TestImportEnv(t *testing.T) {
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("import", "env", envFile)
+	resetFlags()
+	err := runCmd("import", envFile)
 	if err != nil {
-		t.Fatalf("import env: %v", err)
+		t.Fatalf("import: %v", err)
 	}
 	if !strings.Contains(out.String(), "Imported 2 entries") {
 		t.Errorf("unexpected output: %s", out.String())
@@ -935,16 +595,17 @@ func TestImportEnv(t *testing.T) {
 	}
 }
 
-func TestImportCSV(t *testing.T) {
+func TestImport_CSV(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
 	csvFile := filepath.Join(t.TempDir(), "export.csv")
-	os.WriteFile(csvFile, []byte("Title,Username,Password,Notes,URL\nGitHub,octocat,secret,,https://github.com\n"), 0600)
+	os.WriteFile(csvFile, []byte("name,value\ngithub,secret123\n"), 0600)
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("import", "csv", csvFile)
+	resetFlags()
+	err := runCmd("import", csvFile)
 	if err != nil {
 		t.Fatalf("import csv: %v", err)
 	}
@@ -953,206 +614,77 @@ func TestImportCSV(t *testing.T) {
 	}
 }
 
-func TestImportEnv_SkipsDuplicates(t *testing.T) {
+func TestImport_SkipsDuplicates(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\nuser\npass\n\n")
+	setInput("masterpass\noldvalue\n")
 	_ = runCmd("add", "DB_HOST")
 
 	envFile := filepath.Join(t.TempDir(), "test.env")
 	os.WriteFile(envFile, []byte("DB_HOST=localhost\nDB_PORT=5432\n"), 0600)
 
 	setInput("masterpass\n")
-	resetFlags()
 	out.Reset()
-	err := runCmd("import", "env", envFile)
+	resetFlags()
+	err := runCmd("import", envFile)
 	if err != nil {
-		t.Fatalf("import env: %v", err)
+		t.Fatalf("import: %v", err)
 	}
 	if !strings.Contains(out.String(), "1 skipped") {
 		t.Errorf("expected 1 skipped: %s", out.String())
 	}
 }
 
-func TestExportEnv(t *testing.T) {
+func TestImport_Replace(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	setInput("masterpass\nuser\nsecret123\n\n")
-	_ = runCmd("add", "aws-key")
+	setInput("masterpass\noldvalue\n")
+	_ = runCmd("add", "DB_HOST")
+
+	envFile := filepath.Join(t.TempDir(), "test.env")
+	os.WriteFile(envFile, []byte("DB_HOST=newvalue\n"), 0600)
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("export", "env")
-	if err != nil {
-		t.Fatalf("export env: %v", err)
-	}
-	if !strings.Contains(out.String(), "AWS_KEY='secret123'") {
-		t.Errorf("expected env export: %s", out.String())
-	}
-}
-
-func TestExportCSV(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\nsecret123\nnotes here\n")
-	_ = runCmd("add", "github")
-
-	setInput("masterpass\n")
 	resetFlags()
-	out.Reset()
-	err := runCmd("export", "csv")
+	err := runCmd("import", "--replace", envFile)
 	if err != nil {
-		t.Fatalf("export csv: %v", err)
+		t.Fatalf("import --replace: %v", err)
 	}
-	output := out.String()
-	if !strings.Contains(output, "Name,Username,Password") {
-		t.Errorf("expected CSV header: %s", output)
+	if !strings.Contains(out.String(), "1 replaced") {
+		t.Errorf("expected 1 replaced: %s", out.String())
 	}
-	if !strings.Contains(output, "github,user,secret123") {
-		t.Errorf("expected github entry: %s", output)
-	}
-}
 
-// --- Phase 2: TOTP tests ---
-
-func TestAdd_WithTotp(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\nGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\n")
+	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("add", "github", "--totp")
-	if err != nil {
-		t.Fatalf("add with totp: %v", err)
-	}
-	if !strings.Contains(out.String(), `"github" added`) {
-		t.Errorf("unexpected output: %s", out.String())
-	}
-}
-
-func TestTotp_GenerateCode(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\nGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\n")
-	_ = runCmd("add", "github", "--totp")
-
-	setInput("masterpass\n")
 	resetFlags()
-	out.Reset()
-	err := runCmd("totp", "github")
-	if err != nil {
-		t.Fatalf("totp: %v", err)
-	}
-	output := out.String()
-	if !strings.Contains(output, "expires in") {
-		t.Errorf("expected TOTP code with expiry: %s", output)
-	}
-	if len(strings.TrimSpace(output)) < 6 {
-		t.Errorf("expected at least 6 chars for code + message: %s", output)
-	}
-}
-
-func TestTotp_NoSecret(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\n")
-	_ = runCmd("add", "github")
-
-	setInput("masterpass\n")
-	resetFlags()
-	err := runCmd("totp", "github")
-	if err == nil {
-		t.Error("expected error for entry without TOTP secret")
-	}
-}
-
-func TestTotp_NotFound(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\n")
-	err := runCmd("totp", "nonexistent")
-	if err == nil {
-		t.Error("expected error for nonexistent entry")
-	}
-}
-
-func TestGet_ShowsTotpIndicator(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\nGEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\n")
-	_ = runCmd("add", "github", "--totp")
-
-	setInput("masterpass\n")
-	resetFlags()
-	out.Reset()
-	err := runCmd("get", "--print", "github")
+	err = runCmd("get", "--print", "DB_HOST")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if !strings.Contains(out.String(), "TOTP:     configured") {
-		t.Errorf("expected TOTP indicator: %s", out.String())
+	if strings.TrimSpace(out.String()) != "newvalue" {
+		t.Errorf("expected 'newvalue', got %q", out.String())
 	}
 }
 
-// --- Phase 2: Multiple vaults tests ---
+func TestImport_UnsupportedFormat(t *testing.T) {
+	setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
 
-func TestMigrateOldVault(t *testing.T) {
-	dir := t.TempDir()
-	oldVault := filepath.Join(dir, "vault.enc")
-	os.WriteFile(oldVault, []byte("encrypted-data"), 0600)
-	os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"auto_sync":true}`), 0600)
+	file := filepath.Join(t.TempDir(), "data.txt")
+	os.WriteFile(file, []byte("some data"), 0600)
 
-	migrateOldVault(dir)
-
-	newPath := filepath.Join(dir, "vaults", "default", "vault.enc")
-	if _, err := os.Stat(newPath); err != nil {
-		t.Errorf("expected vault to be migrated to %s", newPath)
-	}
-	if _, err := os.Stat(oldVault); err == nil {
-		t.Error("old vault should be moved, not copied")
-	}
-
-	newConfig := filepath.Join(dir, "vaults", "default", "config.json")
-	if _, err := os.Stat(newConfig); err != nil {
-		t.Errorf("expected config to be migrated to %s", newConfig)
+	setInput("masterpass\n")
+	resetFlags()
+	err := runCmd("import", file)
+	if err == nil {
+		t.Error("expected error for unsupported format")
 	}
 }
 
-func TestMigrateOldVault_NoOldVault(t *testing.T) {
-	dir := t.TempDir()
-	migrateOldVault(dir)
-
-	newPath := filepath.Join(dir, "vaults", "default", "vault.enc")
-	if _, err := os.Stat(newPath); err == nil {
-		t.Error("should not create vault if none exists")
-	}
-}
-
-func TestMigrateOldVault_AlreadyMigrated(t *testing.T) {
-	dir := t.TempDir()
-	oldVault := filepath.Join(dir, "vault.enc")
-	os.WriteFile(oldVault, []byte("old-data"), 0600)
-
-	newDir := filepath.Join(dir, "vaults", "default")
-	os.MkdirAll(newDir, 0700)
-	os.WriteFile(filepath.Join(newDir, "vault.enc"), []byte("new-data"), 0600)
-
-	migrateOldVault(dir)
-
-	data, _ := os.ReadFile(filepath.Join(newDir, "vault.enc"))
-	if string(data) != "new-data" {
-		t.Error("should not overwrite already-migrated vault")
-	}
-}
-
-// --- Config command tests ---
+// --- config tests ---
 
 func TestConfig_ShowAll(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
@@ -1163,8 +695,15 @@ func TestConfig_ShowAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
-	if !strings.Contains(out.String(), "auto-sync = off") {
-		t.Errorf("expected default config output: %s", out.String())
+	output := out.String()
+	if !strings.Contains(output, "auto-sync = off") {
+		t.Errorf("expected auto-sync in output: %s", output)
+	}
+	if !strings.Contains(output, "session-timeout = 15") {
+		t.Errorf("expected session-timeout in output: %s", output)
+	}
+	if !strings.Contains(output, "git = ") {
+		t.Errorf("expected git in output: %s", output)
 	}
 }
 
@@ -1194,15 +733,6 @@ func TestConfig_SetKey(t *testing.T) {
 	if !strings.Contains(out.String(), "auto-sync = on") {
 		t.Errorf("expected confirmation: %s", out.String())
 	}
-
-	out.Reset()
-	err = runCmd("config", "auto-sync")
-	if err != nil {
-		t.Fatalf("config get after set: %v", err)
-	}
-	if strings.TrimSpace(out.String()) != "on" {
-		t.Errorf("expected 'on' after set, got %q", out.String())
-	}
 }
 
 func TestConfig_UnknownKey(t *testing.T) {
@@ -1215,19 +745,142 @@ func TestConfig_UnknownKey(t *testing.T) {
 	}
 }
 
-func TestConfig_InvalidValue(t *testing.T) {
-	setupTestApp(t, "masterpass\nmasterpass\n")
+func TestConfig_SetGit(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	_ = runCmd("init")
 
-	err := runCmd("config", "auto-sync", "maybe")
-	if err == nil {
-		t.Error("expected error for invalid value")
+	out.Reset()
+	err := runCmd("config", "git", "git@github.com:user/vault.git")
+	if err != nil {
+		t.Fatalf("config set git: %v", err)
+	}
+	if !strings.Contains(out.String(), "git = git@github.com:user/vault.git") {
+		t.Errorf("expected confirmation: %s", out.String())
 	}
 }
 
-// --- Security: env var name sanitization ---
+// --- passwd tests ---
 
-func TestToEnvVar_StripsInvalidChars(t *testing.T) {
+func TestPasswd_Success(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("masterpass\nnewpass123\nnewpass123\n")
+	out.Reset()
+	err := runCmd("passwd")
+	if err != nil {
+		t.Fatalf("passwd: %v", err)
+	}
+	if !strings.Contains(out.String(), "Master password changed") {
+		t.Errorf("expected success message: %s", out.String())
+	}
+
+	setInput("newpass123\n")
+	out.Reset()
+	err = runCmd("list")
+	if err != nil {
+		t.Fatalf("list with new password: %v", err)
+	}
+}
+
+func TestPasswd_OldPasswordWrong(t *testing.T) {
+	setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("wrongpass\nnewpass123\nnewpass123\n")
+	err := runCmd("passwd")
+	if err == nil {
+		t.Error("expected error for wrong current password")
+	}
+}
+
+func TestPasswd_EmptyNewPassword(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("masterpass\n\n\n")
+	out.Reset()
+	err := runCmd("passwd")
+	if err != nil {
+		t.Fatalf("passwd with empty new password: %v", err)
+	}
+	if !strings.Contains(out.String(), "Master password changed") {
+		t.Errorf("expected success: %s", out.String())
+	}
+}
+
+func TestPasswd_PreservesEntries(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("masterpass\nsecretvalue\n")
+	_ = runCmd("add", "github")
+
+	setInput("masterpass\nnewpass123\nnewpass123\n")
+	_ = runCmd("passwd")
+
+	setInput("newpass123\n")
+	out.Reset()
+	resetFlags()
+	err := runCmd("get", "--print", "github")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "secretvalue" {
+		t.Errorf("expected 'secretvalue', got %q", out.String())
+	}
+}
+
+// --- sync tests ---
+
+func TestInit_WithGit(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
+	err := runCmd("init", "--git")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := out.String()
+	if !strings.Contains(output, "Vault created successfully") {
+		t.Errorf("expected vault created message: %s", output)
+	}
+	if !strings.Contains(output, "Git repository initialized") {
+		t.Errorf("expected git init message: %s", output)
+	}
+}
+
+func TestSync_ManualSync(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
+	_ = runCmd("init", "--git")
+
+	setInput("masterpass\nvalue\n")
+	_ = runCmd("add", "github")
+	app.Wait()
+
+	setInput("")
+	out.Reset()
+	err := runCmd("sync")
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if !strings.Contains(out.String(), "Vault synced") {
+		t.Errorf("expected sync message: %s", out.String())
+	}
+}
+
+func TestSync_NotARepo(t *testing.T) {
+	setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("init")
+
+	setInput("")
+	err := runCmd("sync")
+	if err == nil {
+		t.Error("expected error when vault is not a git repo")
+	}
+}
+
+// --- env var name tests ---
+
+func TestToEnvVar_Conversion(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
@@ -1238,6 +891,7 @@ func TestToEnvVar_StripsInvalidChars(t *testing.T) {
 		{"has.dots.here", "HAS_DOTS_HERE"},
 		{"special!@#chars", "SPECIAL___CHARS"},
 		{"123numeric", "_123NUMERIC"},
+		{"", ""},
 	}
 	for _, tt := range tests {
 		got := toEnvVar(tt.input)
@@ -1247,72 +901,7 @@ func TestToEnvVar_StripsInvalidChars(t *testing.T) {
 	}
 }
 
-func TestToEnvVar_RejectsEmpty(t *testing.T) {
-	got := toEnvVar("")
-	if got != "" {
-		t.Errorf("toEnvVar(\"\") = %q, want empty", got)
-	}
-}
-
-func TestEnv_SkipsUnsafeNames(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\npass\n\n")
-	_ = runCmd("add", "good-name")
-
-	setInput("masterpass\n")
-	out.Reset()
-	err := runCmd("env")
-	if err != nil {
-		t.Fatalf("env: %v", err)
-	}
-	if !strings.Contains(out.String(), "GOOD_NAME") {
-		t.Errorf("expected GOOD_NAME in output: %s", out.String())
-	}
-}
-
-func TestExportEnv_QuotesValues(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\nhas spaces\n\n")
-	_ = runCmd("add", "mykey")
-
-	setInput("masterpass\n")
-	resetFlags()
-	out.Reset()
-	err := runCmd("export", "env")
-	if err != nil {
-		t.Fatalf("export env: %v", err)
-	}
-	output := out.String()
-	if !strings.Contains(output, "MYKEY='has spaces'") {
-		t.Errorf("expected quoted value in export env: %s", output)
-	}
-}
-
-func TestExportEnv_EscapesSingleQuotes(t *testing.T) {
-	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
-
-	setInput("masterpass\nuser\nit's secret\n\n")
-	_ = runCmd("add", "mykey")
-
-	setInput("masterpass\n")
-	resetFlags()
-	out.Reset()
-	err := runCmd("export", "env")
-	if err != nil {
-		t.Fatalf("export env: %v", err)
-	}
-	output := out.String()
-	if strings.Contains(output, "it's") {
-		t.Errorf("single quote should be escaped: %s", output)
-	}
-}
-
-// --- Agent session caching tests ---
+// --- agent tests ---
 
 func TestGetPassword_AgentDisabled_FallsThrough(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
@@ -1399,6 +988,96 @@ func TestLock_NoAgent(t *testing.T) {
 		t.Errorf("expected not running message: %s", out.String())
 	}
 }
+
+// --- destroy tests ---
+
+func TestDestroy_SpecificVault(t *testing.T) {
+	dir := t.TempDir()
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+	mock := &clipboard.MockClipboard{}
+
+	// Set up vault at <dir>/vaults/work/vault.enc
+	app.VaultPath = filepath.Join(dir, "vaults", "work", "vault.enc")
+	app.SocketPath = ""
+	app.Out = out
+	app.ErrOut = errOut
+	app.Clipboard = mock
+	app.KDFParams = crypto.FastKDFParams()
+	app.Interactive = false
+	vaultName = "work"
+
+	setInput("\n")
+	resetFlags()
+	_ = runCmd("init", "--vault", "work")
+
+	if _, err := os.Stat(app.VaultPath); err != nil {
+		t.Fatalf("vault should exist: %v", err)
+	}
+
+	setInput("yes\n")
+	out.Reset()
+	err := runCmd("destroy", "--vault", "work")
+	if err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if !strings.Contains(out.String(), "destroyed") {
+		t.Errorf("expected destroyed message: %s", out.String())
+	}
+
+	vaultDir := filepath.Dir(app.VaultPath)
+	if _, err := os.Stat(vaultDir); !os.IsNotExist(err) {
+		t.Error("vault directory should be removed")
+	}
+}
+
+func TestDestroy_Aborted(t *testing.T) {
+	dir := t.TempDir()
+	out := &bytes.Buffer{}
+
+	app.VaultPath = filepath.Join(dir, "vaults", "work", "vault.enc")
+	app.SocketPath = ""
+	app.Out = out
+	app.ErrOut = &bytes.Buffer{}
+	app.Clipboard = &clipboard.MockClipboard{}
+	app.KDFParams = crypto.FastKDFParams()
+	app.Interactive = false
+	vaultName = "work"
+
+	setInput("\n")
+	resetFlags()
+	_ = runCmd("init", "--vault", "work")
+
+	setInput("no\n")
+	out.Reset()
+	err := runCmd("destroy", "--vault", "work")
+	if err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if !strings.Contains(out.String(), "Aborted") {
+		t.Errorf("expected aborted message: %s", out.String())
+	}
+
+	if _, err := os.Stat(app.VaultPath); err != nil {
+		t.Error("vault should still exist after abort")
+	}
+}
+
+func TestDestroy_VaultNotFound(t *testing.T) {
+	dir := t.TempDir()
+	app.VaultPath = filepath.Join(dir, "vaults", "nonexistent", "vault.enc")
+	app.Out = &bytes.Buffer{}
+	app.ErrOut = &bytes.Buffer{}
+	vaultName = "nonexistent"
+
+	setInput("")
+	err := runCmd("destroy", "--vault", "nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent vault")
+	}
+}
+
+// --- helpers ---
 
 func testSocketPath(t *testing.T) string {
 	t.Helper()

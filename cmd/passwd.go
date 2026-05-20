@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/rogerio/passman/internal/agent"
+	psync "github.com/rogerio/passman/internal/sync"
 	"github.com/rogerio/passman/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -11,12 +13,6 @@ import (
 var passwdCmd = &cobra.Command{
 	Use:   "passwd",
 	Short: "Change the master password",
-	Long: `Change the vault master password. You will be prompted for the current
-password, then a new password (minimum 8 characters) with confirmation.
-
-The vault is decrypted with the old password and re-encrypted with the
-new one. Any cached password in the agent is cleared.`,
-	Example: `  passman passwd`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store := &vault.Store{Path: app.VaultPath, KDFParams: app.KDFParams}
 
@@ -37,16 +33,15 @@ new one. Any cached password in the agent is cleared.`,
 		}
 		defer vault.ZeroBytes(newPassword)
 
+		if len(newPassword) > 0 && len(newPassword) < minPasswordLen {
+			return fmt.Errorf("new password must be at least %d characters", minPasswordLen)
+		}
+
 		confirm, err := readPassword("Confirm new master password: ")
 		if err != nil {
 			return err
 		}
 		defer vault.ZeroBytes(confirm)
-
-		const minPasswordLen = 8
-		if len(newPassword) < minPasswordLen {
-			return fmt.Errorf("new password must be at least %d characters", minPasswordLen)
-		}
 
 		if string(newPassword) != string(confirm) {
 			return fmt.Errorf("passwords do not match")
@@ -56,6 +51,11 @@ new one. Any cached password in the agent is cleared.`,
 			return fmt.Errorf("save vault: %w", err)
 		}
 
+		vaultDir := filepath.Dir(app.VaultPath)
+		cfg, _ := psync.LoadConfig(vaultDir)
+		cfg.NoPassword = len(newPassword) == 0
+		_ = psync.SaveConfig(vaultDir, cfg)
+
 		if app.SocketPath != "" {
 			client := agent.NewClient(app.SocketPath)
 			if client.Ping() {
@@ -63,7 +63,7 @@ new one. Any cached password in the agent is cleared.`,
 			}
 		}
 
-		storePasswordInAgent(newPassword)
+		cacheInAgent(newPassword)
 		fmt.Fprintln(app.Out, "Master password changed.")
 		return nil
 	},

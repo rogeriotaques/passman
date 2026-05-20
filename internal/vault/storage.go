@@ -11,12 +11,12 @@ import (
 	"github.com/rogerio/passman/internal/crypto"
 )
 
-const currentVersion = 1
+const currentVersion = 2
 
 var (
-	ErrVaultExists          = errors.New("vault already exists")
-	ErrVaultNotFound        = errors.New("vault not found")
-	ErrUnsupportedVersion   = errors.New("unsupported vault version")
+	ErrVaultExists        = errors.New("vault already exists")
+	ErrVaultNotFound      = errors.New("vault not found")
+	ErrUnsupportedVersion = errors.New("unsupported vault version")
 )
 
 type Store struct {
@@ -87,6 +87,7 @@ func (s *Store) Save(v *Vault, password []byte) error {
 	if err != nil {
 		return fmt.Errorf("encrypt vault: %w", err)
 	}
+	blob.Version = currentVersion
 
 	data, err := json.Marshal(blob)
 	if err != nil {

@@ -188,13 +188,13 @@ func TestEncrypt_UniqueNonces(t *testing.T) {
 	}
 }
 
-func TestEncryptedBlob_Version(t *testing.T) {
+func TestEncryptedBlob_VersionNotSet(t *testing.T) {
 	key := bytes.Repeat([]byte{0xAA}, 32)
 	params := FastKDFParams()
 	params.Salt = bytes.Repeat([]byte{0xBB}, 16)
 
 	blob, _ := Encrypt([]byte("data"), key, params)
-	if blob.Version != 1 {
-		t.Errorf("expected version 1, got %d", blob.Version)
+	if blob.Version != 0 {
+		t.Errorf("Encrypt should not set version (caller's responsibility), got %d", blob.Version)
 	}
 }

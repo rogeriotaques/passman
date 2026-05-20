@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	psync "github.com/rogerio/passman/internal/sync"
@@ -9,21 +10,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const minPasswordLen = 8
+
 var initCmd = &cobra.Command{
-	Use:   "init",
+	Use:   "init [vault-name]",
 	Short: "Create a new vault",
-	Long: `Create a new encrypted vault. You will be prompted for a master password
-(minimum 8 characters) with confirmation.
-
-The vault is stored at ~/.passman/vaults/<name>/vault.enc by default.
-Use --vault to choose a name, or --vault-path for a custom location.
-
-With --git, a git repository is initialized in the vault directory and
-you are optionally prompted for a remote URL for sync.`,
-	Example: `  passman init
-  passman init --vault work
-  passman init --git`,
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 && vaultName == "" {
+			vaultName = args[0]
+			home, _ := cmd.Root().PersistentFlags().GetString("vault")
+			if home == "" {
+				// re-resolve vault path with provided name
+				resolveVaultPath(args[0])
+			}
+		}
+
 		store := &vault.Store{Path: app.VaultPath, KDFParams: app.KDFParams}
 
 		if store.Exists() {
@@ -36,26 +38,34 @@ you are optionally prompted for a remote URL for sync.`,
 		}
 		defer vault.ZeroBytes(password)
 
-		confirm, err := readPassword("Confirm master password: ")
-		if err != nil {
-			return err
-		}
-		defer vault.ZeroBytes(confirm)
+		if len(password) > 0 {
+			if len(password) < minPasswordLen {
+				return fmt.Errorf("master password must be at least %d characters", minPasswordLen)
+			}
 
-		const minPasswordLen = 8
-		if len(password) < minPasswordLen {
-			return fmt.Errorf("master password must be at least %d characters", minPasswordLen)
-		}
+			confirm, err := readPassword("Confirm master password: ")
+			if err != nil {
+				return err
+			}
+			defer vault.ZeroBytes(confirm)
 
-		if string(password) != string(confirm) {
-			return fmt.Errorf("passwords do not match")
+			if string(password) != string(confirm) {
+				return fmt.Errorf("passwords do not match")
+			}
 		}
 
 		if err := store.Init(password); err != nil {
 			return err
 		}
 
-		storePasswordInAgent(password)
+		if len(password) == 0 {
+			vaultDir := filepath.Dir(app.VaultPath)
+			cfg, _ := psync.LoadConfig(vaultDir)
+			cfg.NoPassword = true
+			_ = psync.SaveConfig(vaultDir, cfg)
+		}
+
+		cacheInAgent(password)
 		fmt.Fprintln(app.Out, "Vault created successfully.")
 
 		useGit, _ := cmd.Flags().GetBool("git")
@@ -87,6 +97,14 @@ you are optionally prompted for a remote URL for sync.`,
 
 		return nil
 	},
+}
+
+func resolveVaultPath(name string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	app.VaultPath = filepath.Join(home, ".passman", "vaults", name, "vault.enc")
 }
 
 func init() {

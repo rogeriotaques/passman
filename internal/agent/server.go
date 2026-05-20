@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -32,11 +33,12 @@ func NewServer(socketPath string) *Server {
 func (s *Server) Start() error {
 	os.Remove(s.socketPath)
 
+	oldMask := syscall.Umask(0077)
 	ln, err := net.Listen("unix", s.socketPath)
+	syscall.Umask(oldMask)
 	if err != nil {
 		return err
 	}
-	os.Chmod(s.socketPath, 0600)
 	s.listener = ln
 
 	go s.reaper()

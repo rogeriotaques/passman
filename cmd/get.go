@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/rogerio/passman/internal/vault"
@@ -10,29 +9,17 @@ import (
 )
 
 var getCmd = &cobra.Command{
-	Use:   "get <name>",
-	Short: "Retrieve a credential from the vault",
-	Long: `Retrieve a credential by name. By default the password is copied to the
-clipboard and automatically cleared after 30 seconds.
-
-Use -p/--print to display the password on stdout instead of copying.`,
-	Example: `  passman get github
-  passman get github --print`,
+	Use:   "get <secret-name>",
+	Short: "Retrieve a secret from the vault",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		store := &vault.Store{Path: app.VaultPath, KDFParams: app.KDFParams}
 
-		password, err := getPassword()
+		v, _, password, err := app.loadVault()
 		if err != nil {
 			return err
 		}
 		defer vault.ZeroBytes(password)
-
-		v, err := store.Load(password)
-		if err != nil {
-			return err
-		}
 
 		entry, err := v.Get(name)
 		if err != nil {
@@ -41,45 +28,27 @@ Use -p/--print to display the password on stdout instead of copying.`,
 
 		printToStdout, _ := cmd.Flags().GetBool("print")
 		if printToStdout {
-			showEntry(entry, true)
+			fmt.Fprintln(app.Out, entry.Value)
 			return nil
 		}
-		return copyAndShowEntry(entry)
+
+		return copyToClipboard(entry.Value)
 	},
 }
 
-func showEntry(entry *vault.Entry, showPassword bool) {
-	fmt.Fprintf(app.Out, "Name:     %s\n", entry.Name)
-	fmt.Fprintf(app.Out, "Username: %s\n", entry.Username)
-	if showPassword {
-		fmt.Fprintf(app.Out, "Password: %s\n", entry.Password)
-	} else {
-		fmt.Fprintln(app.Out, "Password copied to clipboard (clears in 30s).")
+func copyToClipboard(value string) error {
+	if app.Clipboard == nil {
+		fmt.Fprintln(app.Out, value)
+		return nil
 	}
-	if len(entry.Tags) > 0 {
-		fmt.Fprintf(app.Out, "Tags:     %s\n", strings.Join(entry.Tags, ", "))
+	if err := app.Clipboard.CopyWithAutoClear(value, 30*time.Second); err != nil {
+		return fmt.Errorf("copy to clipboard: %w", err)
 	}
-	if entry.TotpSecret != "" {
-		fmt.Fprintln(app.Out, "TOTP:     configured (use 'passman totp' to generate code)")
-	}
-	if entry.Notes != "" {
-		fmt.Fprintf(app.Out, "Notes:    %s\n", entry.Notes)
-	}
-}
-
-func copyAndShowEntry(entry *vault.Entry) error {
-	if app.Clipboard != nil {
-		if err := app.Clipboard.CopyWithAutoClear(entry.Password, 30*time.Second); err != nil {
-			return fmt.Errorf("copy to clipboard: %w", err)
-		}
-		showEntry(entry, false)
-	} else {
-		showEntry(entry, true)
-	}
+	fmt.Fprintln(app.Out, "Secret copied to clipboard (clears in 30s).")
 	return nil
 }
 
 func init() {
-	getCmd.Flags().BoolP("print", "p", false, "print password to stdout instead of clipboard")
+	getCmd.Flags().BoolP("print", "p", false, "print secret to stdout instead of clipboard")
 	rootCmd.AddCommand(getCmd)
 }

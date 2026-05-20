@@ -63,6 +63,10 @@ func readInput(prompt string) (string, error) {
 }
 
 func getPassword() ([]byte, error) {
+	if isNoPassword() {
+		return []byte(""), nil
+	}
+
 	if app.SocketPath != "" {
 		client := agent.NewClient(app.SocketPath)
 		if pw, err := client.Retrieve(app.VaultPath); err == nil {
@@ -79,8 +83,17 @@ func getPassword() ([]byte, error) {
 	return pw, nil
 }
 
+func isNoPassword() bool {
+	vaultDir := filepath.Dir(app.VaultPath)
+	cfg, err := psync.LoadConfig(vaultDir)
+	if err != nil {
+		return false
+	}
+	return cfg.NoPassword
+}
+
 func cacheInAgent(pw []byte) {
-	if app.SocketPath == "" {
+	if app.SocketPath == "" || len(pw) == 0 {
 		return
 	}
 	ttl := loadSessionTimeout()
@@ -95,10 +108,6 @@ func cacheInAgent(pw []byte) {
 		client = agent.NewClient(app.SocketPath)
 		_ = client.Store(app.VaultPath, pw, ttl)
 	}
-}
-
-func storePasswordInAgent(pw []byte) {
-	cacheInAgent(pw)
 }
 
 func loadSessionTimeout() time.Duration {
@@ -117,4 +126,3 @@ func loadSessionTimeout() time.Duration {
 	}
 	return time.Duration(minutes) * time.Minute
 }
-

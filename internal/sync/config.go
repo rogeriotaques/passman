@@ -13,8 +13,10 @@ const configFile = "config.json"
 const DefaultSessionTimeout = 15
 
 type Config struct {
-	AutoSync       bool `json:"auto_sync"`
-	SessionTimeout *int `json:"session_timeout,omitempty"`
+	AutoSync       bool   `json:"auto_sync"`
+	SessionTimeout *int   `json:"session_timeout,omitempty"`
+	GitRemote      string `json:"git_remote,omitempty"`
+	NoPassword     bool   `json:"no_password,omitempty"`
 }
 
 func LoadConfig(dir string) (*Config, error) {
@@ -54,6 +56,8 @@ func (c *Config) Get(key string) (string, error) {
 			return strconv.Itoa(DefaultSessionTimeout), nil
 		}
 		return strconv.Itoa(*c.SessionTimeout), nil
+	case "git":
+		return c.GitRemote, nil
 	default:
 		return "", fmt.Errorf("unknown config key: %q (available: %v)", key, ConfigKeys())
 	}
@@ -70,7 +74,6 @@ func (c *Config) Set(key, value string) error {
 		default:
 			return fmt.Errorf("invalid value for %q: %q (use 'on' or 'off')", key, value)
 		}
-		return nil
 	case "session-timeout":
 		n, err := strconv.Atoi(value)
 		if err != nil {
@@ -80,17 +83,14 @@ func (c *Config) Set(key, value string) error {
 			return fmt.Errorf("invalid value for %q: %q (must be >= 0)", key, value)
 		}
 		c.SessionTimeout = &n
-		return nil
+	case "git":
+		c.GitRemote = value
 	default:
 		return fmt.Errorf("unknown config key: %q (available: %v)", key, ConfigKeys())
 	}
+	return nil
 }
 
 func ConfigKeys() []string {
-	return []string{"auto-sync", "session-timeout"}
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return []string{"auto-sync", "session-timeout", "git"}
 }

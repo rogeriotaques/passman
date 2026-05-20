@@ -5,11 +5,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	gosync "sync"
 
 	"github.com/rogerio/passman/internal/clipboard"
 	"github.com/rogerio/passman/internal/crypto"
 	psync "github.com/rogerio/passman/internal/sync"
+	"github.com/rogerio/passman/internal/vault"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -51,6 +53,28 @@ func (a *App) backgroundSync() {
 	}()
 }
 
+func (a *App) loadVault() (*vault.Vault, *vault.Store, []byte, error) {
+	store := &vault.Store{Path: a.VaultPath, KDFParams: a.KDFParams}
+	password, err := getPassword()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	v, err := store.Load(password)
+	if err != nil {
+		vault.ZeroBytes(password)
+		return nil, nil, nil, err
+	}
+	return v, store, password, nil
+}
+
+func (a *App) saveAndSync(store *vault.Store, v *vault.Vault, password []byte) error {
+	if err := store.Save(v, password); err != nil {
+		return err
+	}
+	a.backgroundSync()
+	return nil
+}
+
 var app = &App{
 	In:     os.Stdin,
 	Out:    os.Stdout,
@@ -64,19 +88,21 @@ const banner = `
  ██╔═══╝ ██╔══██║╚════██║╚════██║██║╚██╔╝██║██╔══██║██║╚██╗██║
  ██║     ██║  ██║███████║███████║██║ ╚═╝ ██║██║  ██║██║ ╚████║
  ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
- Manage passwords, secrets, and 2FA from your terminal
+ Manage secrets from your terminal
 `
 
 var rootCmd = &cobra.Command{
-	Use:   "passman",
-	Short: "Manage passwords, secrets, and 2FA from your terminal",
-	Long:  banner,
+	Use:               "passman",
+	Short:             "Manage secrets from your terminal",
+	Long:              banner,
+	CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+	SilenceUsage:      true,
+	SilenceErrors:     true,
 }
 
 var vaultName string
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&app.VaultPath, "vault-path", "", "path to vault file")
 	rootCmd.PersistentFlags().StringVar(&vaultName, "vault", "", "vault name (default: \"default\")")
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if app.VaultPath == "" {
@@ -85,8 +111,6 @@ func init() {
 				return err
 			}
 			baseDir := filepath.Join(home, ".passman")
-
-			migrateOldVault(baseDir)
 
 			name := vaultName
 			if name == "" {
@@ -107,37 +131,18 @@ func init() {
 	}
 }
 
-func migrateOldVault(baseDir string) {
-	oldPath := filepath.Join(baseDir, "vault.enc")
-	newDir := filepath.Join(baseDir, "vaults", "default")
-	newPath := filepath.Join(newDir, "vault.enc")
-
-	if _, err := os.Stat(oldPath); err != nil {
-		return
-	}
-	if _, err := os.Stat(newPath); err == nil {
-		return
-	}
-
-	os.MkdirAll(newDir, 0700)
-	os.Rename(oldPath, newPath)
-
-	oldConfig := filepath.Join(baseDir, "config.json")
-	newConfig := filepath.Join(newDir, "config.json")
-	if _, err := os.Stat(oldConfig); err == nil {
-		os.Rename(oldConfig, newConfig)
-	}
-
-	oldGit := filepath.Join(baseDir, ".git")
-	newGit := filepath.Join(newDir, ".git")
-	if _, err := os.Stat(oldGit); err == nil {
-		os.Rename(oldGit, newGit)
-	}
-}
-
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(app.ErrOut, formatError(err))
 		os.Exit(1)
 	}
 	app.Wait()
+}
+
+func formatError(err error) string {
+	msg := err.Error()
+	if len(msg) == 0 {
+		return msg
+	}
+	return strings.ToUpper(msg[:1]) + msg[1:]
 }

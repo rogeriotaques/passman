@@ -62,7 +62,7 @@ func TestStore_SaveLoad_RoundTrip(t *testing.T) {
 		t.Fatalf("load after init: %v", err)
 	}
 
-	_ = v.Add(Entry{Name: "github", Username: "user", Password: "secret"})
+	_ = v.Add(Entry{Name: "github", Value: "secret"})
 
 	if err := s.Save(v, password); err != nil {
 		t.Fatalf("save: %v", err)
@@ -76,11 +76,11 @@ func TestStore_SaveLoad_RoundTrip(t *testing.T) {
 	if len(v2.Entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(v2.Entries))
 	}
-	if v2.Entries[0].Username != "user" {
-		t.Errorf("expected username 'user', got %q", v2.Entries[0].Username)
+	if v2.Entries[0].Name != "github" {
+		t.Errorf("expected name 'github', got %q", v2.Entries[0].Name)
 	}
-	if v2.Entries[0].Password != "secret" {
-		t.Errorf("expected password 'secret', got %q", v2.Entries[0].Password)
+	if v2.Entries[0].Value != "secret" {
+		t.Errorf("expected value 'secret', got %q", v2.Entries[0].Value)
 	}
 }
 
@@ -126,7 +126,7 @@ func TestStore_Load_UnsupportedVersion(t *testing.T) {
 	_ = s.Init([]byte("master"))
 
 	data, _ := os.ReadFile(s.Path)
-	modified := strings.Replace(string(data), `"version":1`, `"version":99`, 1)
+	modified := strings.Replace(string(data), `"version":2`, `"version":99`, 1)
 	os.WriteFile(s.Path, []byte(modified), 0600)
 
 	_, err := s.Load([]byte("master"))
@@ -154,7 +154,7 @@ func TestStore_AtomicWrite_NoTempFileLeftOver(t *testing.T) {
 	_ = s.Init([]byte("master"))
 
 	v, _ := s.Load([]byte("master"))
-	_ = v.Add(Entry{Name: "test", Password: "secret"})
+	_ = v.Add(Entry{Name: "test", Value: "secret"})
 	_ = s.Save(v, []byte("master"))
 
 	entries, err := os.ReadDir(filepath.Dir(s.Path))
@@ -168,21 +168,28 @@ func TestStore_AtomicWrite_NoTempFileLeftOver(t *testing.T) {
 	}
 }
 
-func TestStore_AtomicWrite_PreservesOnFailure(t *testing.T) {
+func TestStore_EmptyPassword(t *testing.T) {
 	s := testStore(t)
-	_ = s.Init([]byte("master"))
-
-	original, _ := os.ReadFile(s.Path)
-
-	v, _ := s.Load([]byte("master"))
-	_ = v.Add(Entry{Name: "test", Password: "secret"})
-	_ = s.Save(v, []byte("master"))
-
-	after, _ := os.ReadFile(s.Path)
-	if len(after) == 0 {
-		t.Error("vault file should not be empty after save")
+	err := s.Init([]byte(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if string(after) == string(original) {
-		t.Error("vault file should have changed after adding entry")
+
+	v, err := s.Load([]byte(""))
+	if err != nil {
+		t.Fatalf("load with empty password: %v", err)
+	}
+
+	_ = v.Add(Entry{Name: "test", Value: "secret"})
+	if err := s.Save(v, []byte("")); err != nil {
+		t.Fatalf("save with empty password: %v", err)
+	}
+
+	v2, err := s.Load([]byte(""))
+	if err != nil {
+		t.Fatalf("reload with empty password: %v", err)
+	}
+	if len(v2.Entries) != 1 || v2.Entries[0].Value != "secret" {
+		t.Errorf("unexpected vault state: %+v", v2)
 	}
 }

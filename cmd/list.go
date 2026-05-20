@@ -2,10 +2,10 @@ package cmd
 
 import (
 	"fmt"
-	"io"
+	"os"
 	"strings"
 
-	"github.com/manifoldco/promptui"
+	"github.com/rogerio/passman/internal/selector"
 	"github.com/rogerio/passman/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -15,50 +15,19 @@ const listDefaultLimit = 20
 var listCmd = &cobra.Command{
 	Use:   "list [query...]",
 	Short: "List and search vault entries",
-	Long: `List credentials stored in the vault. Without arguments, shows the
-first 20 entries (use --all to show everything).
-
-With arguments, performs a multi-token search across entry names,
-usernames, notes, and tags. All tokens must match (case-insensitive)
-for an entry to appear.
-
-Use --tag to filter by tag. Search and --tag can be combined.
-
-In a terminal, results are shown as an interactive selector — use
-arrow keys to navigate and Enter to retrieve the selected entry.
-When piped, output is plain text (one name per line).`,
-	Example: `  passman list
-  passman list --all
-  passman list github
-  passman list alice@ github
-  passman list --tag prod`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		store := &vault.Store{Path: app.VaultPath, KDFParams: app.KDFParams}
-
-		password, err := getPassword()
+		v, _, password, err := app.loadVault()
 		if err != nil {
 			return err
 		}
 		defer vault.ZeroBytes(password)
 
-		v, err := store.Load(password)
-		if err != nil {
-			return err
-		}
-
-		tag, _ := cmd.Flags().GetString("tag")
 		showAll, _ := cmd.Flags().GetBool("all")
-
-		entries := v.Entries
-		if tag != "" {
-			entries = v.ListByTag(tag)
-		}
-
 		query := strings.Join(args, " ")
-		filtered := (&vault.Vault{Entries: entries}).Search(query)
+		entries := v.Search(query)
 
-		if len(filtered) == 0 {
-			if query != "" || tag != "" {
+		if len(entries) == 0 {
+			if query != "" {
 				fmt.Fprintln(app.Out, "No matching entries.")
 			} else {
 				fmt.Fprintln(app.Out, "Vault is empty.")
@@ -67,9 +36,9 @@ When piped, output is plain text (one name per line).`,
 		}
 
 		if app.Interactive {
-			return listInteractive(v, filtered)
+			return listInteractive(v, entries)
 		}
-		return listPlain(filtered, showAll, query)
+		return listPlain(entries, showAll, query)
 	},
 }
 
@@ -91,47 +60,30 @@ func listPlain(entries []vault.Entry, showAll bool, query string) error {
 }
 
 func listInteractive(v *vault.Vault, entries []vault.Entry) error {
-	if len(entries) == 1 {
-		entry, err := v.Get(entries[0].Name)
-		if err != nil {
-			return err
-		}
-		return copyAndShowEntry(entry)
-	}
-
 	names := make([]string, len(entries))
 	for i, e := range entries {
-		label := e.Name
-		if e.Username != "" {
-			label += "  (" + e.Username + ")"
-		}
-		names[i] = label
+		names[i] = e.Name
 	}
 
-	prompt := promptui.Select{
-		Label: "Select an entry",
+	inFile, ok := app.In.(*os.File)
+	if !ok {
+		return listPlain(entries, true, "")
+	}
+
+	idx, err := selector.Run(selector.Options{
+		Label: "Select an entry:",
 		Items: names,
 		Size:  15,
-		Stdin: io.NopCloser(app.In),
+	}, int(inFile.Fd()), app.Out)
+
+	if err != nil || idx < 0 {
+		return nil
 	}
 
-	idx, _, err := prompt.Run()
-	if err != nil {
-		if err == promptui.ErrInterrupt || err == promptui.ErrEOF {
-			return nil
-		}
-		return err
-	}
-
-	entry, err := v.Get(entries[idx].Name)
-	if err != nil {
-		return err
-	}
-	return copyAndShowEntry(entry)
+	return copyToClipboard(entries[idx].Value)
 }
 
 func init() {
 	listCmd.Flags().BoolP("all", "a", false, "show all entries without truncation")
-	listCmd.Flags().String("tag", "", "filter by tag")
 	rootCmd.AddCommand(listCmd)
 }

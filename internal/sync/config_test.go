@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -40,7 +41,7 @@ func TestSaveConfig_CreatesFile(t *testing.T) {
 	}
 
 	path := filepath.Join(dir, "config.json")
-	if !fileExists(path) {
+	if _, err := os.Stat(path); err != nil {
 		t.Error("expected config.json to exist")
 	}
 }
@@ -130,17 +131,12 @@ func TestConfig_Set_UnknownKey(t *testing.T) {
 
 func TestConfig_Keys(t *testing.T) {
 	keys := ConfigKeys()
-	if len(keys) == 0 {
-		t.Error("expected at least one config key")
-	}
-	found := false
+	expected := map[string]bool{"auto-sync": true, "session-timeout": true, "git": true}
 	for _, k := range keys {
-		if k == "auto-sync" {
-			found = true
-		}
+		delete(expected, k)
 	}
-	if !found {
-		t.Error("expected 'auto-sync' in config keys")
+	if len(expected) > 0 {
+		t.Errorf("missing config keys: %v", expected)
 	}
 }
 
@@ -209,15 +205,40 @@ func TestConfig_SessionTimeout_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestConfig_Keys_IncludesSessionTimeout(t *testing.T) {
-	keys := ConfigKeys()
-	found := false
-	for _, k := range keys {
-		if k == "session-timeout" {
-			found = true
-		}
+func TestConfig_Get_Git_Default(t *testing.T) {
+	cfg := &Config{}
+	val, err := cfg.Get("git")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !found {
-		t.Error("expected 'session-timeout' in config keys")
+	if val != "" {
+		t.Errorf("expected empty default, got %q", val)
+	}
+}
+
+func TestConfig_Set_Git(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.Set("git", "git@github.com:user/vault.git"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	val, _ := cfg.Get("git")
+	if val != "git@github.com:user/vault.git" {
+		t.Errorf("expected git URL, got %q", val)
+	}
+}
+
+func TestConfig_Git_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{}
+	_ = cfg.Set("git", "https://github.com/user/vault.git")
+	_ = SaveConfig(dir, cfg)
+
+	loaded, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	val, _ := loaded.Get("git")
+	if val != "https://github.com/user/vault.git" {
+		t.Errorf("expected git URL after round trip, got %q", val)
 	}
 }

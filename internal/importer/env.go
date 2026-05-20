@@ -30,9 +30,13 @@ func ParseEnv(r io.Reader) ([]vault.Entry, error) {
 		value := strings.TrimSpace(line[idx+1:])
 		value = unquote(value)
 
+		if key == "" {
+			continue
+		}
+
 		entries = append(entries, vault.Entry{
-			Name:     key,
-			Password: value,
+			Name:  key,
+			Value: value,
 		})
 	}
 
