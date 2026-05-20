@@ -1,5 +1,10 @@
 # The binary
 passman
 
+# Agents
+.claude
+.openclaude
+.opencode
+
 # Misc
 .DS_Store
