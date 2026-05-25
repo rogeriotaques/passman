@@ -57,6 +57,9 @@ passman lock
 
 # Permanently delete a vault (or all vaults)
 passman destroy [--vault vault-name]
+
+# Upgrade passman to the latest version from the master branch
+passman upgrade
 ```
 
 Vaults are stored as `~/.passman/vaults/<name>/vault.enc`.
@@ -86,6 +89,7 @@ mv passman /usr/local/bin/
 - Multiple named vaults
 - Case-insensitive entry lookup
 - Session caching via background agent
+- Self-upgrading from source via `passman upgrade`
 - Single binary, no external dependencies at runtime
 
 ## Security
