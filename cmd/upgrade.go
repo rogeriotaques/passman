@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var repoURL = "https://github.com/rogerio/passman.git"
+var repoURL = "https://github.com/rogeriotaques/passman.git"
 
 // override in tests to avoid replacing the test binary
 var upgradeDestPath = ""
