@@ -1,5 +1,21 @@
 # Work Log
 
+## 2026-05-26: Add `passman upgrade` command
+
+- **Feature**: Added `upgrade` command to auto-upgrade passman by cloning the repo, compiling, and replacing the current binary.
+- **Files changed**: `cmd/root.go`, `cmd/upgrade.go`, `cmd/upgrade_test.go`, `docs/DOCS.md`, `docs/knowledge/commands.md`
+- **Details**:
+  - Added `version` variable (`"dev"` by default) to `cmd/root.go`, wired into `rootCmd.Version` for `--version` flag.
+  - `upgrade` clones the `master` branch (shallow), reads the latest commit hash via `git rev-parse --short HEAD`, builds with `-ldflags` to bake the hash into the new binary, and atomically replaces the current executable.
+  - Includes cross-device safe binary replacement fallback (copy + rename).
+  - Tests cover: commit hash parsing, already-up-to-date, missing git/go errors, and end-to-end successful upgrade against a local `file://` repo.
+
+## 2026-05-26: Fix wrong-password agent caching
+
+- **Bug**: When user entered a wrong password, `getPassword()` cached it in the agent immediately. On the next command, the wrong password was retrieved from agent without prompting.
+- **Fix**: Moved `cacheInAgent(password)` from `getPassword()` to `loadVault()` so passwords are only cached after successful decryption.
+- **Files changed**: `cmd/input.go`, `cmd/root.go`, `cmd/cmd_test.go`
+
 ## 2026-05-20: Major Refactoring (POC → DOCS.md Spec)
 
 ### Completed

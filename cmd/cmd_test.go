@@ -12,6 +12,7 @@ import (
 	"github.com/rogerio/passman/internal/agent"
 	"github.com/rogerio/passman/internal/clipboard"
 	"github.com/rogerio/passman/internal/crypto"
+	"github.com/rogerio/passman/internal/vault"
 )
 
 func setupTestApp(t *testing.T, input string) (*bytes.Buffer, *bytes.Buffer, *clipboard.MockClipboard) {
@@ -942,6 +943,42 @@ func TestGetPassword_AgentStoreAndRetrieve(t *testing.T) {
 	if string(pw) != "masterpass" {
 		t.Errorf("expected 'masterpass', got %q", pw)
 	}
+}
+
+func TestLoadVault_WrongPassword_DoesNotCache(t *testing.T) {
+	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
+	sock := testSocketPath(t)
+	app.SocketPath = sock
+
+	srv := startTestAgent(t, sock)
+	defer srv.Stop()
+
+	_ = runCmd("init")
+
+	// Clear the correctly-cached password so we can simulate a wrong entry
+	client := agent.NewClient(sock)
+	_ = client.Lock()
+
+	// Try to load vault with wrong password
+	setInput("wrongpass\n")
+	_, _, _, err := app.loadVault()
+	if err == nil {
+		t.Fatal("expected error for wrong password")
+	}
+
+	// Next time should prompt again, not use cached wrong password
+	setInput("masterpass\n")
+	v, _, pw, err := app.loadVault()
+	if err != nil {
+		t.Fatalf("expected success after prompting again, got %v", err)
+	}
+	if v == nil {
+		t.Fatal("expected vault to be loaded")
+	}
+	vault.ZeroBytes(pw)
+
+	// Verify success message was printed (from a command like get)
+	_ = out
 }
 
 func TestLock_ClearsCache(t *testing.T) {

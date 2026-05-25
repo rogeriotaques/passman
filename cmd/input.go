@@ -79,7 +79,6 @@ func getPassword() ([]byte, error) {
 		return nil, err
 	}
 
-	cacheInAgent(pw)
 	return pw, nil
 }
 

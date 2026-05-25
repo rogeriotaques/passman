@@ -64,6 +64,7 @@ func (a *App) loadVault() (*vault.Vault, *vault.Store, []byte, error) {
 		vault.ZeroBytes(password)
 		return nil, nil, nil, err
 	}
+	cacheInAgent(password)
 	return v, store, password, nil
 }
 
@@ -81,6 +82,8 @@ var app = &App{
 	ErrOut: os.Stderr,
 }
 
+var version = "dev"
+
 const banner = `
  ██████╗  █████╗ ███████╗███████╗███╗   ███╗ █████╗ ███╗   ██╗
  ██╔══██╗██╔══██╗██╔════╝██╔════╝████╗ ████║██╔══██╗████╗  ██║
@@ -95,6 +98,7 @@ var rootCmd = &cobra.Command{
 	Use:               "passman",
 	Short:             "Manage secrets from your terminal",
 	Long:              banner,
+	Version:           version,
 	CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	SilenceUsage:      true,
 	SilenceErrors:     true,

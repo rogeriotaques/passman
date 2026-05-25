@@ -50,6 +50,9 @@ passman lock
 
 # Permanently delete a vault (or all vaults)
 passman destroy [--vault vault-name]
+
+# Upgrade passman to the latest version
+passman upgrade
 ```
 
 Vaults are stored as `~/.passman/vaults/<name>/vault.enc`.
@@ -306,6 +309,20 @@ passman destroy
 ```
 
 Without `--vault`, all vaults are deleted. This operation is irreversible.
+
+---
+
+### upgrade
+
+Upgrade passman to the latest version by cloning the repository, compiling, and replacing the current binary.
+
+```bash
+passman upgrade
+```
+
+Requires `git` and `go` to be installed and available in your PATH.
+
+The latest commit on the `master` branch is used as the new version.
 
 ---
 

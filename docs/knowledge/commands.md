@@ -20,6 +20,7 @@ All commands use `--vault <name>` to target a specific vault (default: "default"
 | `lock` | `cmd/lock.go` | Clear agent cached passwords |
 | `vaults` | `cmd/vaults.go` | List all vault names |
 | `destroy` | `cmd/destroy.go` | Permanently delete a vault or all vaults |
+| `upgrade` | `cmd/upgrade.go` | Upgrade to the latest version |
 
 ## DRY Helpers
 
