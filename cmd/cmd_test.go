@@ -195,6 +195,24 @@ func TestAdd_NonexistentVault_NoPasswordPrompt(t *testing.T) {
 	}
 }
 
+func TestAdd_NonexistentVault_CreatesNoFiles(t *testing.T) {
+	dir := t.TempDir()
+	_, _, _ = setupTestApp(t, "")
+	app.VaultPath = filepath.Join(dir, "nested", "vault.enc")
+	app.SocketPath = ""
+
+	err := runCmd("add", "github")
+	if !errors.Is(err, vault.ErrVaultNotFound) {
+		t.Fatalf("expected ErrVaultNotFound, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Dir(app.VaultPath)); !os.IsNotExist(statErr) {
+		t.Errorf("failed add must not create the vault directory")
+	}
+	if _, statErr := os.Stat(app.VaultPath + ".lock"); !os.IsNotExist(statErr) {
+		t.Errorf("failed add must not create the lock file")
+	}
+}
+
 func TestAdd_NonexistentVault_DoesNotBlockLaterInit(t *testing.T) {
 	_, _, _ = setupTestApp(t, "masterpass\nsecret\n")
 
