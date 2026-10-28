@@ -107,6 +107,10 @@ func (s *Store) Save(v *Vault, password []byte) error {
 }
 
 func (s *Store) Load(password []byte) (*Vault, error) {
+	if !s.Exists() {
+		return nil, ErrVaultNotFound
+	}
+
 	lf, err := s.lock()
 	if err != nil {
 		return nil, err

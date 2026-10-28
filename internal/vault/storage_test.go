@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,6 +112,20 @@ func TestStore_Load_NonexistentFile(t *testing.T) {
 	_, err := s.Load([]byte("master"))
 	if err == nil {
 		t.Error("expected error for nonexistent file")
+	}
+}
+
+func TestStore_Load_NonexistentFile_NoSideEffects(t *testing.T) {
+	s := testStore(t)
+	_, err := s.Load([]byte("master"))
+	if !errors.Is(err, ErrVaultNotFound) {
+		t.Fatalf("expected ErrVaultNotFound, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Dir(s.Path)); !os.IsNotExist(statErr) {
+		t.Errorf("loading a missing vault must not create the vault directory")
+	}
+	if _, statErr := os.Stat(s.Path + ".lock"); !os.IsNotExist(statErr) {
+		t.Errorf("loading a missing vault must not create a lock file")
 	}
 }
 

@@ -17,6 +17,9 @@ import (
 
 var inputReader *bufio.Reader
 
+// ensureAgent is a seam so tests can assert that no process is spawned.
+var ensureAgent = agent.EnsureAgent
+
 func getInputReader() *bufio.Reader {
 	if inputReader == nil {
 		inputReader = bufio.NewReader(app.In)
@@ -103,7 +106,10 @@ func cacheInAgent(pw []byte) {
 	if err := client.Store(app.VaultPath, pw, ttl); err == nil {
 		return
 	}
-	if agent.EnsureAgent(app.SocketPath) == nil {
+	if !app.AutoStartAgent {
+		return
+	}
+	if ensureAgent(app.SocketPath) == nil {
 		client = agent.NewClient(app.SocketPath)
 		_ = client.Store(app.VaultPath, pw, ttl)
 	}

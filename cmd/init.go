@@ -17,13 +17,9 @@ var initCmd = &cobra.Command{
 	Short: "Create a new vault",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) == 1 && vaultName == "" {
-			vaultName = args[0]
-			home, _ := cmd.Root().PersistentFlags().GetString("vault")
-			if home == "" {
-				// re-resolve vault path with provided name
-				resolveVaultPath(args[0])
-			}
+		if len(args) == 1 && !cmd.Root().PersistentFlags().Changed("vault") {
+			// re-resolve vault path with provided name
+			resolveVaultPath(args[0])
 		}
 
 		store := &vault.Store{Path: app.VaultPath, KDFParams: app.KDFParams}

@@ -1,5 +1,16 @@
 # Work Log
 
+## 2026-10-28: Stop tests from spawning agent processes
+
+- **Bug**: `cmd` tests that touched a non-empty `SocketPath` reached `cacheInAgent` → `agent.EnsureAgent`, which re-executes `os.Executable()`. Under `go test` that is the test binary, and Go's flag parser stops at the first non-flag arg (`_agent`), so the child ran the **entire test suite again** — each pass spawning more children, exponentially.
+- **Fix**:
+  - Added `App.AutoStartAgent` (default `true` for the real app); `cacheInAgent` returns before spawning when it is false.
+  - `setupTestApp` and the destroy tests set it to `false`.
+  - Added `cmd/main_test.go` `TestMain`: if the test binary is invoked with `_agent`, it prints "refusing to start agent from test binary" and exits 1.
+  - Added `ensureAgent` package seam so tests can assert zero spawn attempts.
+- **Tests**: `TestCacheInAgent_AutoStartDisabled_DoesNotSpawn`, `TestCacheInAgent_AutoStartEnabled_SpawnsAgent`, `TestTestBinary_RefusesAgentInvocation`.
+- **Files changed**: `cmd/root.go`, `cmd/input.go`, `cmd/main_test.go`, `cmd/cmd_test.go`, `docs/knowledge/tests.md`
+
 ## 2026-05-26: Add `passman upgrade` command
 
 - **Feature**: Added `upgrade` command to auto-upgrade passman by cloning the repo, compiling, and replacing the current binary.

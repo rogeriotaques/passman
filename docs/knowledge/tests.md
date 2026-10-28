@@ -32,6 +32,8 @@ go test ./cmd/ -run TestAdd_And_Get -v
 - `runCmd(args...)` — execute a command and return error
 - `testSocketPath(t)` — create a temp Unix socket path
 - `startTestAgent(t, sock)` — start a test agent server
+- `stubEnsureAgent(t, fn)` — replace the agent spawner so tests can assert it is not called
+- `setupTestApp` sets `app.AutoStartAgent = false`; real commands keep it `true`
 
 ### Fast KDF Params
 

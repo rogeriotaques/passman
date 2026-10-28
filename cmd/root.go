@@ -25,7 +25,10 @@ type App struct {
 	Clipboard   clipboard.Clipboard
 	KDFParams   crypto.KDFParams
 	Interactive bool
-	wg          gosync.WaitGroup
+	// AutoStartAgent lets a command start the background agent when it is not
+	// running. Tests disable it to avoid re-executing the test binary.
+	AutoStartAgent bool
+	wg             gosync.WaitGroup
 }
 
 func (a *App) Wait() {
@@ -55,6 +58,9 @@ func (a *App) backgroundSync() {
 
 func (a *App) loadVault() (*vault.Vault, *vault.Store, []byte, error) {
 	store := &vault.Store{Path: a.VaultPath, KDFParams: a.KDFParams}
+	if !store.Exists() {
+		return nil, nil, nil, vault.ErrVaultNotFound
+	}
 	password, err := getPassword()
 	if err != nil {
 		return nil, nil, nil, err
@@ -77,9 +83,10 @@ func (a *App) saveAndSync(store *vault.Store, v *vault.Vault, password []byte) e
 }
 
 var app = &App{
-	In:     os.Stdin,
-	Out:    os.Stdout,
-	ErrOut: os.Stderr,
+	In:             os.Stdin,
+	Out:            os.Stdout,
+	ErrOut:         os.Stderr,
+	AutoStartAgent: true,
 }
 
 var version = "dev"

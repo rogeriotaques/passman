@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +31,7 @@ func setupTestApp(t *testing.T, input string) (*bytes.Buffer, *bytes.Buffer, *cl
 	app.Clipboard = mock
 	app.KDFParams = crypto.FastKDFParams()
 	app.Interactive = false
+	app.AutoStartAgent = false
 
 	setInput(input)
 	resetFlags()
@@ -48,6 +51,7 @@ func resetFlags() {
 	listCmd.Flags().Set("all", "false")
 	importCmd.Flags().Set("replace", "false")
 	rootCmd.PersistentFlags().Set("vault", "")
+	rootCmd.PersistentFlags().Lookup("vault").Changed = false
 }
 
 func runCmd(args ...string) error {
@@ -142,7 +146,72 @@ func TestInit_AlreadyExists(t *testing.T) {
 	}
 }
 
+func TestInit_PositionalName_CreatesNamedVault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	setupTestApp(t, "masterpass\nmasterpass\n")
+	app.VaultPath = ""
+
+	if err := runCmd("init", "work"); err != nil {
+		t.Fatalf("init work: %v", err)
+	}
+
+	vaultFile := filepath.Join(home, ".passman", "vaults", "work", "vault.enc")
+	if _, err := os.Stat(vaultFile); err != nil {
+		t.Fatalf("expected vault at %s: %v", vaultFile, err)
+	}
+}
+
+func TestInit_VaultFlag_WinsOverPositionalName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	setupTestApp(t, "masterpass\nmasterpass\n")
+	app.VaultPath = ""
+
+	if err := runCmd("--vault", "flagged", "init", "positional"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	vaultFile := filepath.Join(home, ".passman", "vaults", "flagged", "vault.enc")
+	if _, err := os.Stat(vaultFile); err != nil {
+		t.Fatalf("expected vault at %s: %v", vaultFile, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".passman", "vaults", "positional")); err == nil {
+		t.Error("positional name must be ignored when --vault is given")
+	}
+}
+
 // --- add and get tests ---
+
+func TestAdd_NonexistentVault_NoPasswordPrompt(t *testing.T) {
+	_, errOut, _ := setupTestApp(t, "masterpass\nsecret\n")
+
+	err := runCmd("add", "github")
+	if !errors.Is(err, vault.ErrVaultNotFound) {
+		t.Fatalf("expected ErrVaultNotFound, got %v", err)
+	}
+	if strings.Contains(errOut.String(), "Master password") {
+		t.Errorf("must not prompt for a password when the vault does not exist: %s", errOut.String())
+	}
+}
+
+func TestAdd_NonexistentVault_DoesNotBlockLaterInit(t *testing.T) {
+	_, _, _ = setupTestApp(t, "masterpass\nsecret\n")
+
+	_ = runCmd("add", "github")
+
+	if _, err := os.Stat(app.VaultPath + ".lock"); !os.IsNotExist(err) {
+		t.Fatalf("failed add must not leave a lock file behind")
+	}
+
+	setInput("masterpass\nmasterpass\n")
+	if err := runCmd("init"); err != nil {
+		t.Fatalf("init after failed add: %v", err)
+	}
+	if _, err := os.Stat(app.VaultPath); err != nil {
+		t.Fatalf("vault should exist after init: %v", err)
+	}
+}
 
 func TestAdd_And_Get(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
@@ -1026,6 +1095,61 @@ func TestLock_NoAgent(t *testing.T) {
 	}
 }
 
+// --- agent autostart tests ---
+
+func TestCacheInAgent_AutoStartDisabled_DoesNotSpawn(t *testing.T) {
+	setupTestApp(t, "")
+	app.SocketPath = testSocketPath(t)
+	app.AutoStartAgent = false
+
+	calls := 0
+	stubEnsureAgent(t, func(string) error {
+		calls++
+		return nil
+	})
+
+	cacheInAgent([]byte("secret"))
+
+	if calls != 0 {
+		t.Errorf("expected no agent spawn when auto-start is disabled, got %d", calls)
+	}
+}
+
+func TestCacheInAgent_AutoStartEnabled_SpawnsAgent(t *testing.T) {
+	setupTestApp(t, "")
+	app.SocketPath = testSocketPath(t)
+	app.AutoStartAgent = true
+
+	calls := 0
+	stubEnsureAgent(t, func(string) error {
+		calls++
+		return errors.New("no agent")
+	})
+
+	cacheInAgent([]byte("secret"))
+
+	if calls != 1 {
+		t.Errorf("expected 1 agent spawn attempt, got %d", calls)
+	}
+}
+
+// When the test binary is re-executed as the agent, it must refuse instead of
+// running the whole test suite again (which would spawn more test binaries).
+func TestTestBinary_RefusesAgentInvocation(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := exec.Command(exe, "_agent", "--socket", testSocketPath(t)).CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected test binary to refuse agent invocation, got: %s", out)
+	}
+	if !strings.Contains(string(out), "refusing") {
+		t.Errorf("expected refusal message, got: %s", out)
+	}
+}
+
 // --- destroy tests ---
 
 func TestDestroy_SpecificVault(t *testing.T) {
@@ -1042,6 +1166,7 @@ func TestDestroy_SpecificVault(t *testing.T) {
 	app.Clipboard = mock
 	app.KDFParams = crypto.FastKDFParams()
 	app.Interactive = false
+	app.AutoStartAgent = false
 	vaultName = "work"
 
 	setInput("\n")
@@ -1079,6 +1204,7 @@ func TestDestroy_Aborted(t *testing.T) {
 	app.Clipboard = &clipboard.MockClipboard{}
 	app.KDFParams = crypto.FastKDFParams()
 	app.Interactive = false
+	app.AutoStartAgent = false
 	vaultName = "work"
 
 	setInput("\n")
@@ -1105,6 +1231,7 @@ func TestDestroy_VaultNotFound(t *testing.T) {
 	app.VaultPath = filepath.Join(dir, "vaults", "nonexistent", "vault.enc")
 	app.Out = &bytes.Buffer{}
 	app.ErrOut = &bytes.Buffer{}
+	app.AutoStartAgent = false
 	vaultName = "nonexistent"
 
 	setInput("")
@@ -1124,6 +1251,13 @@ func testSocketPath(t *testing.T) string {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	return filepath.Join(dir, "a.sock")
+}
+
+func stubEnsureAgent(t *testing.T, fn func(string) error) {
+	t.Helper()
+	orig := ensureAgent
+	ensureAgent = fn
+	t.Cleanup(func() { ensureAgent = orig })
 }
 
 func startTestAgent(t *testing.T, sock string) *agent.Server {
