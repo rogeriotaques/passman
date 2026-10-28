@@ -56,5 +56,5 @@ var configCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(configCmd)
+	vaultCmd.AddCommand(configCmd)
 }

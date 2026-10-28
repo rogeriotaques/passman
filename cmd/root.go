@@ -89,22 +89,23 @@ var app = &App{
 	AutoStartAgent: true,
 }
 
-var version = "dev"
-
-const banner = `
+const bannerArt = `
  ██████╗  █████╗ ███████╗███████╗███╗   ███╗ █████╗ ███╗   ██╗
  ██╔══██╗██╔══██╗██╔════╝██╔════╝████╗ ████║██╔══██╗████╗  ██║
  ██████╔╝███████║███████╗███████╗██╔████╔██║███████║██╔██╗ ██║
  ██╔═══╝ ██╔══██║╚════██║╚════██║██║╚██╔╝██║██╔══██║██║╚██╗██║
  ██║     ██║  ██║███████║███████║██║ ╚═╝ ██║██║  ██║██║ ╚████║
  ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝
- Manage secrets from your terminal
 `
+
+func bannerText() string {
+	return bannerArt + " Manage secrets from your terminal • v" + version + "\n"
+}
 
 var rootCmd = &cobra.Command{
 	Use:               "passman",
 	Short:             "Manage secrets from your terminal",
-	Long:              banner,
+	Long:              bannerText(),
 	Version:           version,
 	CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	SilenceUsage:      true,

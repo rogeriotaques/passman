@@ -70,5 +70,5 @@ var passwdCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(passwdCmd)
+	vaultCmd.AddCommand(passwdCmd)
 }

@@ -15,48 +15,50 @@ clipboard integration, git sync, and import/export.
 
 ## Quick start
 
+Commands are grouped by noun: `secret` for entries, `vault` for the vault itself.
+
 ```bash
 # Create a vault (vault-name is optional, defaults to default)
-passman init [vault-name]
+passman vault init [vault-name]
 
 # Add a secret
-passman add [secret-name] [--vault vault-name]
+passman secret add [secret-name] [--vault vault-name]
 
 # Retrieve a secret
-passman get [secret-name] [--vault vault-name]
+passman secret get [secret-name] [--vault vault-name]
 
 # List secret names
-passman list [secret-name] [--vault vault-name]
+passman secret list [query...] [--vault vault-name]
 
 # List all vaults
-passman vaults
+passman vault list
 
 # Remove a secret by its name
-passman rm [secret-name] [--vault vault-name]
+passman secret remove [secret-name] [--vault vault-name]
 
 # Generate a random password
 passman generate [--length <n>] [--no-symbols]
 
 # Export secrets as environment variables or inject with --eval
-passman export [secret-name] [--vault vault-name] [--eval]
+passman secret export [secret-name] [--vault vault-name] [--eval]
 
 # Import a CSV or .env file
-passman import file.csv|.env [--vault vault-name] [--replace]
+passman secret import file.csv|.env [--vault vault-name] [--replace]
 
 # View or update vault configuration
-passman config [[key] value]
+passman vault config [[key] value]
 
 # Sync/backup the vault with its remote
-passman sync [--vault vault-name]
+passman vault sync [--vault vault-name]
 
 # Change the vault password
-passman passwd [--vault vault-name]
+passman vault passwd [--vault vault-name]
 
 # Clear cached passwords from the agent
 passman lock
 
 # Permanently delete a vault (or all vaults)
-passman destroy [--vault vault-name]
+passman vault destroy [--vault vault-name]
 
 # Upgrade passman to the latest version from the master branch
 passman upgrade
@@ -69,6 +71,8 @@ Vaults are stored as `~/.passman/vaults/<name>/vault.enc`.
 ```bash
 go build -o passman .
 ```
+
+The version comes from the `VERSION` file at the repository root and is embedded at build time. Bump that file before building a release.
 
 Move the binary somewhere in your `$PATH`:
 

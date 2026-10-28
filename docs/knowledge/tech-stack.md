@@ -21,6 +21,13 @@
 - **Randomness**: `crypto/rand` (CSPRNG) for salts (16 bytes), nonces (12 bytes), passwords
 - **Vault format version**: 2 (JSON envelope with KDF params, nonce, ciphertext)
 
+## Versioning
+
+- Semver, single source of truth: `VERSION` file at the repository root
+- `main.go` embeds the file (`//go:embed`) and calls `cmd.SetVersion`; the default `dev` is only a fallback
+- Bump `VERSION` before building a release — `passman upgrade` reads it from the cloned repo to detect updates
+- The value is validated as strict semver (`MAJOR.MINOR.PATCH`, optional pre-release/build) at startup, on `upgrade`, and by `TestRepoVersionFile_IsSemver`. An invalid or empty `VERSION` stops the binary with an error.
+
 ## Architecture
 
 ```

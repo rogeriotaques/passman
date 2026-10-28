@@ -8,11 +8,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var vaultsCmd = &cobra.Command{
-	Use:   "vaults",
-	Short: "List all vaults",
+var vaultListCmd = &cobra.Command{
+	Use:     "list",
+	Short:   "List all vaults",
 	Long:    `List all vaults found under ~/.passman/vaults/.`,
-	Example: `  passman vaults`,
+	Example: `  passman vault list`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -49,5 +49,5 @@ var vaultsCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(vaultsCmd)
+	vaultCmd.AddCommand(vaultListCmd)
 }

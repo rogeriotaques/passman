@@ -174,5 +174,5 @@ func shellQuoteKV(kv string) string {
 }
 
 func init() {
-	rootCmd.AddCommand(exportCmd)
+	secretCmd.AddCommand(exportCmd)
 }

@@ -91,5 +91,5 @@ var importCmd = &cobra.Command{
 
 func init() {
 	importCmd.Flags().Bool("replace", false, "replace existing entries on name collision")
-	rootCmd.AddCommand(importCmd)
+	secretCmd.AddCommand(importCmd)
 }

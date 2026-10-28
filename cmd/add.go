@@ -44,5 +44,5 @@ var addCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(addCmd)
+	secretCmd.AddCommand(addCmd)
 }

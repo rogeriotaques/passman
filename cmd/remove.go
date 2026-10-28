@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var rmCmd = &cobra.Command{
-	Use:   "rm <secret-name>",
+var removeCmd = &cobra.Command{
+	Use:   "remove <secret-name>",
 	Short: "Remove a secret from the vault",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -34,5 +34,5 @@ var rmCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(rmCmd)
+	secretCmd.AddCommand(removeCmd)
 }

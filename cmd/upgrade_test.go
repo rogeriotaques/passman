@@ -8,38 +8,46 @@ import (
 	"testing"
 )
 
-func TestFetchLatestCommitHash(t *testing.T) {
-	repo := createTestRepo(t)
-	hash, err := fetchLatestCommitHash("file://" + repo)
+func TestFetchLatestVersion(t *testing.T) {
+	repo := createTestRepo(t, "0.2.0")
+	got, err := fetchLatestVersion("file://" + repo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(hash) == 0 {
-		t.Fatal("expected non-empty hash")
+	if got != "0.2.0" {
+		t.Errorf("expected 0.2.0, got %q", got)
 	}
-	if strings.Contains(hash, "\n") {
-		t.Errorf("expected single-line hash, got: %q", hash)
+}
+
+func TestFetchLatestVersion_MissingFile(t *testing.T) {
+	repo := createTestRepo(t, "")
+	_, err := fetchLatestVersion("file://" + repo)
+	if err == nil {
+		t.Fatal("expected error when the repository has no VERSION file")
+	}
+}
+
+func TestFetchLatestVersion_Invalid(t *testing.T) {
+	repo := createTestRepo(t, "not-semver")
+	_, err := fetchLatestVersion("file://" + repo)
+	if err == nil {
+		t.Fatal("expected error for a VERSION file that is not semver")
 	}
 }
 
 func TestUpgrade_AlreadyUpToDate(t *testing.T) {
-	repo := createTestRepo(t)
+	repo := createTestRepo(t, "0.2.0")
 
 	oldRepo := repoURL
 	repoURL = "file://" + repo
 	defer func() { repoURL = oldRepo }()
 
-	// Set current version to match latest commit
-	hash, err := fetchLatestCommitHash("file://" + repo)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	oldVersion := version
-	version = hash
+	version = "0.2.0"
 	defer func() { version = oldVersion }()
 
 	out, errOut, _ := setupTestApp(t, "")
-	err = runUpgrade(nil, nil)
+	err := runUpgrade(nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr: %s", err, errOut.String())
 	}
@@ -88,14 +96,14 @@ func TestUpgrade_MissingGo(t *testing.T) {
 }
 
 func TestUpgrade_Success(t *testing.T) {
-	repo := createTestRepo(t)
+	repo := createTestRepo(t, "0.2.0")
 
 	oldRepo := repoURL
 	repoURL = "file://" + repo
 	defer func() { repoURL = oldRepo }()
 
 	oldVersion := version
-	version = "dev"
+	version = "0.1.0"
 	defer func() { version = oldVersion }()
 
 	// Create a fake destination binary
@@ -114,21 +122,16 @@ func TestUpgrade_Success(t *testing.T) {
 	}
 
 	output := out.String()
-	if !strings.Contains(output, "Current version dev") {
+	if !strings.Contains(output, "Current version 0.1.0") {
 		t.Errorf("expected current version in output, got: %s", output)
 	}
 
-	// Extract the hash from output to verify "Updating to <hash>" appears
-	lines := strings.Split(output, "\n")
-	var updatingLine string
-	for _, line := range lines {
-		if strings.Contains(line, "Updating to ") {
-			updatingLine = line
-			break
-		}
+	// The new version comes from the cloned repository's VERSION file
+	if !strings.Contains(output, "Updating to 0.2.0") {
+		t.Errorf("expected 'Updating to 0.2.0' message, got: %s", output)
 	}
-	if updatingLine == "" {
-		t.Fatalf("expected 'Updating to ...' message, got: %s", output)
+	if !strings.Contains(output, "Upgraded to version 0.2.0") {
+		t.Errorf("expected 'Upgraded to version 0.2.0' message, got: %s", output)
 	}
 
 	// Verify the binary was replaced
@@ -141,7 +144,7 @@ func TestUpgrade_Success(t *testing.T) {
 	}
 }
 
-func createTestRepo(t *testing.T) string {
+func createTestRepo(t *testing.T, version string) string {
 	t.Helper()
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
@@ -172,6 +175,11 @@ func createTestRepo(t *testing.T) string {
 	}
 	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\nfunc main(){}\n"), 0644); err != nil {
 		t.Fatal(err)
+	}
+	if version != "" {
+		if err := os.WriteFile(filepath.Join(repo, "VERSION"), []byte(version+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	run("git", "add", ".")
 	run("git", "commit", "-m", "init")

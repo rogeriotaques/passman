@@ -63,7 +63,7 @@ func runCmd(args ...string) error {
 
 func TestInit_Success(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	err := runCmd("init")
+	err := runCmd("vault", "init")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestInit_Success(t *testing.T) {
 
 func TestInit_EmptyPassword(t *testing.T) {
 	out, _, _ := setupTestApp(t, "\n")
-	err := runCmd("init")
+	err := runCmd("vault", "init")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,12 +85,12 @@ func TestInit_EmptyPassword(t *testing.T) {
 
 func TestInit_EmptyPassword_NoPromptOnSubsequentCommands(t *testing.T) {
 	out, _, _ := setupTestApp(t, "\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	// Add a secret — no password prompt needed (just the value)
 	setInput("mysecret\n")
 	out.Reset()
-	err := runCmd("add", "github")
+	err := runCmd("secret", "add", "github")
 	if err != nil {
 		t.Fatalf("add after empty-password init: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestInit_EmptyPassword_NoPromptOnSubsequentCommands(t *testing.T) {
 	// List — no input needed at all
 	setInput("")
 	out.Reset()
-	err = runCmd("list")
+	err = runCmd("secret", "list")
 	if err != nil {
 		t.Fatalf("list after empty-password init: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestInit_EmptyPassword_NoPromptOnSubsequentCommands(t *testing.T) {
 	setInput("")
 	out.Reset()
 	resetFlags()
-	err = runCmd("get", "--print", "github")
+	err = runCmd("secret", "get", "--print", "github")
 	if err != nil {
 		t.Fatalf("get after empty-password init: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestInit_EmptyPassword_NoPromptOnSubsequentCommands(t *testing.T) {
 
 func TestInit_PasswordTooShort(t *testing.T) {
 	setupTestApp(t, "short\nshort\n")
-	err := runCmd("init")
+	err := runCmd("vault", "init")
 	if err == nil {
 		t.Error("expected error for short password")
 	}
@@ -129,7 +129,7 @@ func TestInit_PasswordTooShort(t *testing.T) {
 
 func TestInit_PasswordMismatch(t *testing.T) {
 	setupTestApp(t, "masterpass\nwrongpass\n")
-	err := runCmd("init")
+	err := runCmd("vault", "init")
 	if err == nil {
 		t.Error("expected error for password mismatch")
 	}
@@ -137,10 +137,10 @@ func TestInit_PasswordMismatch(t *testing.T) {
 
 func TestInit_AlreadyExists(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nmasterpass\n")
-	err := runCmd("init")
+	err := runCmd("vault", "init")
 	if err == nil {
 		t.Error("expected error when vault already exists")
 	}
@@ -152,7 +152,7 @@ func TestInit_PositionalName_CreatesNamedVault(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
 	app.VaultPath = ""
 
-	if err := runCmd("init", "work"); err != nil {
+	if err := runCmd("vault", "init", "work"); err != nil {
 		t.Fatalf("init work: %v", err)
 	}
 
@@ -168,7 +168,7 @@ func TestInit_VaultFlag_WinsOverPositionalName(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
 	app.VaultPath = ""
 
-	if err := runCmd("--vault", "flagged", "init", "positional"); err != nil {
+	if err := runCmd("--vault", "flagged", "vault", "init", "positional"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -181,12 +181,40 @@ func TestInit_VaultFlag_WinsOverPositionalName(t *testing.T) {
 	}
 }
 
+// --- vault list tests ---
+
+func TestVaultList(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	out, _, _ := setupTestApp(t, "")
+	app.VaultPath = ""
+
+	setInput("\n")
+	if err := runCmd("vault", "init", "work"); err != nil {
+		t.Fatalf("init work: %v", err)
+	}
+	setInput("\n")
+	if err := runCmd("vault", "init", "personal"); err != nil {
+		t.Fatalf("init personal: %v", err)
+	}
+
+	out.Reset()
+	if err := runCmd("vault", "list"); err != nil {
+		t.Fatalf("vault list: %v", err)
+	}
+	for _, name := range []string{"work", "personal"} {
+		if !strings.Contains(out.String(), name) {
+			t.Errorf("expected %q in vault list: %s", name, out.String())
+		}
+	}
+}
+
 // --- add and get tests ---
 
 func TestAdd_NonexistentVault_NoPasswordPrompt(t *testing.T) {
 	_, errOut, _ := setupTestApp(t, "masterpass\nsecret\n")
 
-	err := runCmd("add", "github")
+	err := runCmd("secret", "add", "github")
 	if !errors.Is(err, vault.ErrVaultNotFound) {
 		t.Fatalf("expected ErrVaultNotFound, got %v", err)
 	}
@@ -201,7 +229,7 @@ func TestAdd_NonexistentVault_CreatesNoFiles(t *testing.T) {
 	app.VaultPath = filepath.Join(dir, "nested", "vault.enc")
 	app.SocketPath = ""
 
-	err := runCmd("add", "github")
+	err := runCmd("secret", "add", "github")
 	if !errors.Is(err, vault.ErrVaultNotFound) {
 		t.Fatalf("expected ErrVaultNotFound, got %v", err)
 	}
@@ -216,14 +244,14 @@ func TestAdd_NonexistentVault_CreatesNoFiles(t *testing.T) {
 func TestAdd_NonexistentVault_DoesNotBlockLaterInit(t *testing.T) {
 	_, _, _ = setupTestApp(t, "masterpass\nsecret\n")
 
-	_ = runCmd("add", "github")
+	_ = runCmd("secret", "add", "github")
 
 	if _, err := os.Stat(app.VaultPath + ".lock"); !os.IsNotExist(err) {
 		t.Fatalf("failed add must not leave a lock file behind")
 	}
 
 	setInput("masterpass\nmasterpass\n")
-	if err := runCmd("init"); err != nil {
+	if err := runCmd("vault", "init"); err != nil {
 		t.Fatalf("init after failed add: %v", err)
 	}
 	if _, err := os.Stat(app.VaultPath); err != nil {
@@ -233,11 +261,11 @@ func TestAdd_NonexistentVault_DoesNotBlockLaterInit(t *testing.T) {
 
 func TestAdd_And_Get(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nmypassword\n")
 	out.Reset()
-	err := runCmd("add", "github")
+	err := runCmd("secret", "add", "github")
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
@@ -247,7 +275,7 @@ func TestAdd_And_Get(t *testing.T) {
 
 	setInput("masterpass\n")
 	out.Reset()
-	err = runCmd("get", "--print", "github")
+	err = runCmd("secret", "get", "--print", "github")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -258,13 +286,13 @@ func TestAdd_And_Get(t *testing.T) {
 
 func TestAdd_Duplicate(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nvalue1\n")
-	_ = runCmd("add", "github")
+	_ = runCmd("secret", "add", "github")
 
 	setInput("masterpass\nvalue2\n")
-	err := runCmd("add", "github")
+	err := runCmd("secret", "add", "github")
 	if err == nil {
 		t.Error("expected error for duplicate entry")
 	}
@@ -272,15 +300,15 @@ func TestAdd_Duplicate(t *testing.T) {
 
 func TestGet_Clipboard(t *testing.T) {
 	out, _, mock := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nsecretpass\n")
-	_ = runCmd("add", "github")
+	_ = runCmd("secret", "add", "github")
 
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("get", "github")
+	err := runCmd("secret", "get", "github")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -294,10 +322,10 @@ func TestGet_Clipboard(t *testing.T) {
 
 func TestGet_NotFound(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\n")
-	err := runCmd("get", "nonexistent")
+	err := runCmd("secret", "get", "nonexistent")
 	if err == nil {
 		t.Error("expected error for missing entry")
 	}
@@ -307,11 +335,11 @@ func TestGet_NotFound(t *testing.T) {
 
 func TestList_EmptyVault(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("list")
+	err := runCmd("secret", "list")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -322,10 +350,10 @@ func TestList_EmptyVault(t *testing.T) {
 
 func TestList_WrongPassword(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("wrongpassword\n")
-	err := runCmd("list")
+	err := runCmd("secret", "list")
 	if err == nil {
 		t.Error("expected error for wrong password")
 	}
@@ -333,18 +361,18 @@ func TestList_WrongPassword(t *testing.T) {
 
 func TestList_Search(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\npass1\n")
-	_ = runCmd("add", "github-work")
+	_ = runCmd("secret", "add", "github-work")
 	setInput("masterpass\npass2\n")
-	_ = runCmd("add", "github-personal")
+	_ = runCmd("secret", "add", "github-personal")
 	setInput("masterpass\npass3\n")
-	_ = runCmd("add", "aws-prod")
+	_ = runCmd("secret", "add", "aws-prod")
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("list", "github")
+	err := runCmd("secret", "list", "github")
 	if err != nil {
 		t.Fatalf("list search: %v", err)
 	}
@@ -362,16 +390,16 @@ func TestList_Search(t *testing.T) {
 
 func TestList_SearchMultipleTokens(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\npass1\n")
-	_ = runCmd("add", "github-work")
+	_ = runCmd("secret", "add", "github-work")
 	setInput("masterpass\npass2\n")
-	_ = runCmd("add", "github-personal")
+	_ = runCmd("secret", "add", "github-personal")
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("list", "github", "work")
+	err := runCmd("secret", "list", "github", "work")
 	if err != nil {
 		t.Fatalf("list search: %v", err)
 	}
@@ -386,14 +414,14 @@ func TestList_SearchMultipleTokens(t *testing.T) {
 
 func TestList_SearchNoMatch(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nvalue\n")
-	_ = runCmd("add", "github")
+	_ = runCmd("secret", "add", "github")
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("list", "nonexistent")
+	err := runCmd("secret", "list", "nonexistent")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -404,16 +432,16 @@ func TestList_SearchNoMatch(t *testing.T) {
 
 func TestList_TruncatesLongList(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	for i := 0; i < 25; i++ {
 		setInput("masterpass\nvalue\n")
-		_ = runCmd("add", fmt.Sprintf("entry-%03d", i))
+		_ = runCmd("secret", "add", fmt.Sprintf("entry-%03d", i))
 	}
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("list")
+	err := runCmd("secret", "list")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -427,17 +455,17 @@ func TestList_TruncatesLongList(t *testing.T) {
 
 func TestList_AllFlag(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	for i := 0; i < 25; i++ {
 		setInput("masterpass\nvalue\n")
-		_ = runCmd("add", fmt.Sprintf("entry-%03d", i))
+		_ = runCmd("secret", "add", fmt.Sprintf("entry-%03d", i))
 	}
 
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("list", "--all")
+	err := runCmd("secret", "list", "--all")
 	if err != nil {
 		t.Fatalf("list --all: %v", err)
 	}
@@ -453,15 +481,15 @@ func TestList_AllFlag(t *testing.T) {
 
 func TestList_Interactive_SingleResult_NoAutoCopy(t *testing.T) {
 	_, _, mock := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nsecretpass\n")
-	_ = runCmd("add", "github")
+	_ = runCmd("secret", "add", "github")
 
 	setInput("masterpass\n")
 	app.Interactive = false
 
-	err := runCmd("list", "github")
+	err := runCmd("secret", "list", "github")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -474,14 +502,14 @@ func TestList_Interactive_SingleResult_NoAutoCopy(t *testing.T) {
 
 func TestRm_Success(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nvalue\n")
-	_ = runCmd("add", "github")
+	_ = runCmd("secret", "add", "github")
 
 	setInput("masterpass\n")
 	out.Reset()
-	err := runCmd("rm", "github")
+	err := runCmd("secret", "remove", "github")
 	if err != nil {
 		t.Fatalf("rm: %v", err)
 	}
@@ -491,7 +519,7 @@ func TestRm_Success(t *testing.T) {
 
 	setInput("masterpass\n")
 	out.Reset()
-	err = runCmd("list")
+	err = runCmd("secret", "list")
 	if err != nil {
 		t.Fatalf("list after rm: %v", err)
 	}
@@ -502,10 +530,10 @@ func TestRm_Success(t *testing.T) {
 
 func TestRm_NotFound(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\n")
-	err := runCmd("rm", "nonexistent")
+	err := runCmd("secret", "remove", "nonexistent")
 	if err == nil {
 		t.Error("expected error for removing nonexistent entry")
 	}
@@ -541,17 +569,17 @@ func TestGenerate_CustomLength(t *testing.T) {
 
 func TestExport_AllEntries(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nsecret123\n")
-	_ = runCmd("add", "aws-key")
+	_ = runCmd("secret", "add", "aws-key")
 	setInput("masterpass\ndbpass456\n")
-	_ = runCmd("add", "db-password")
+	_ = runCmd("secret", "add", "db-password")
 
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("export")
+	err := runCmd("secret", "export")
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -569,17 +597,17 @@ func TestExport_AllEntries(t *testing.T) {
 
 func TestExport_FilterByName(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nprodpass\n")
-	_ = runCmd("add", "aws-prod")
+	_ = runCmd("secret", "add", "aws-prod")
 	setInput("masterpass\ndevpass\n")
-	_ = runCmd("add", "dev-key")
+	_ = runCmd("secret", "add", "dev-key")
 
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("export", "aws")
+	err := runCmd("secret", "export", "aws")
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -594,15 +622,15 @@ func TestExport_FilterByName(t *testing.T) {
 
 func TestExport_ShellEscape(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nit's a \"test\"\n")
-	_ = runCmd("add", "tricky")
+	_ = runCmd("secret", "add", "tricky")
 
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("export")
+	err := runCmd("secret", "export")
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -617,14 +645,14 @@ func TestExport_ShellEscape(t *testing.T) {
 
 func TestExport_Eval_WithCommand(t *testing.T) {
 	out, _, _ := setupTestApp(t, "\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("production\n")
-	_ = runCmd("add", "my-env")
+	_ = runCmd("secret", "add", "my-env")
 
 	out.Reset()
 	setInput("")
-	err := runCmd("export", "--eval", "--", "sh", "-c", "echo $MY_ENV")
+	err := runCmd("secret", "export", "--eval", "--", "sh", "-c", "echo $MY_ENV")
 	if err != nil {
 		t.Fatalf("export --eval -- cmd: %v", err)
 	}
@@ -635,14 +663,14 @@ func TestExport_Eval_WithCommand(t *testing.T) {
 
 func TestExport_Eval_NoCommand_PrintsExportStatements(t *testing.T) {
 	out, _, _ := setupTestApp(t, "\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("secret123\n")
-	_ = runCmd("add", "aws-key")
+	_ = runCmd("secret", "add", "aws-key")
 
 	out.Reset()
 	setInput("")
-	err := runCmd("export", "--eval")
+	err := runCmd("secret", "export", "--eval")
 	if err != nil {
 		t.Fatalf("export --eval: %v", err)
 	}
@@ -655,7 +683,7 @@ func TestExport_Eval_NoCommand_PrintsExportStatements(t *testing.T) {
 
 func TestImport_Env(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	envFile := filepath.Join(t.TempDir(), "test.env")
 	os.WriteFile(envFile, []byte("DB_HOST=localhost\nDB_PORT=5432\n"), 0600)
@@ -663,7 +691,7 @@ func TestImport_Env(t *testing.T) {
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("import", envFile)
+	err := runCmd("secret", "import", envFile)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -673,7 +701,7 @@ func TestImport_Env(t *testing.T) {
 
 	setInput("masterpass\n")
 	out.Reset()
-	err = runCmd("list")
+	err = runCmd("secret", "list")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -685,7 +713,7 @@ func TestImport_Env(t *testing.T) {
 
 func TestImport_CSV(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	csvFile := filepath.Join(t.TempDir(), "export.csv")
 	os.WriteFile(csvFile, []byte("name,value\ngithub,secret123\n"), 0600)
@@ -693,7 +721,7 @@ func TestImport_CSV(t *testing.T) {
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("import", csvFile)
+	err := runCmd("secret", "import", csvFile)
 	if err != nil {
 		t.Fatalf("import csv: %v", err)
 	}
@@ -704,10 +732,10 @@ func TestImport_CSV(t *testing.T) {
 
 func TestImport_SkipsDuplicates(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\noldvalue\n")
-	_ = runCmd("add", "DB_HOST")
+	_ = runCmd("secret", "add", "DB_HOST")
 
 	envFile := filepath.Join(t.TempDir(), "test.env")
 	os.WriteFile(envFile, []byte("DB_HOST=localhost\nDB_PORT=5432\n"), 0600)
@@ -715,7 +743,7 @@ func TestImport_SkipsDuplicates(t *testing.T) {
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("import", envFile)
+	err := runCmd("secret", "import", envFile)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -726,10 +754,10 @@ func TestImport_SkipsDuplicates(t *testing.T) {
 
 func TestImport_Replace(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\noldvalue\n")
-	_ = runCmd("add", "DB_HOST")
+	_ = runCmd("secret", "add", "DB_HOST")
 
 	envFile := filepath.Join(t.TempDir(), "test.env")
 	os.WriteFile(envFile, []byte("DB_HOST=newvalue\n"), 0600)
@@ -737,7 +765,7 @@ func TestImport_Replace(t *testing.T) {
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("import", "--replace", envFile)
+	err := runCmd("secret", "import", "--replace", envFile)
 	if err != nil {
 		t.Fatalf("import --replace: %v", err)
 	}
@@ -748,7 +776,7 @@ func TestImport_Replace(t *testing.T) {
 	setInput("masterpass\n")
 	out.Reset()
 	resetFlags()
-	err = runCmd("get", "--print", "DB_HOST")
+	err = runCmd("secret", "get", "--print", "DB_HOST")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -759,14 +787,14 @@ func TestImport_Replace(t *testing.T) {
 
 func TestImport_UnsupportedFormat(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	file := filepath.Join(t.TempDir(), "data.txt")
 	os.WriteFile(file, []byte("some data"), 0600)
 
 	setInput("masterpass\n")
 	resetFlags()
-	err := runCmd("import", file)
+	err := runCmd("secret", "import", file)
 	if err == nil {
 		t.Error("expected error for unsupported format")
 	}
@@ -776,10 +804,10 @@ func TestImport_UnsupportedFormat(t *testing.T) {
 
 func TestConfig_ShowAll(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	out.Reset()
-	err := runCmd("config")
+	err := runCmd("vault", "config")
 	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
@@ -797,10 +825,10 @@ func TestConfig_ShowAll(t *testing.T) {
 
 func TestConfig_GetKey(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	out.Reset()
-	err := runCmd("config", "auto-sync")
+	err := runCmd("vault", "config", "auto-sync")
 	if err != nil {
 		t.Fatalf("config get: %v", err)
 	}
@@ -811,10 +839,10 @@ func TestConfig_GetKey(t *testing.T) {
 
 func TestConfig_SetKey(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	out.Reset()
-	err := runCmd("config", "auto-sync", "on")
+	err := runCmd("vault", "config", "auto-sync", "on")
 	if err != nil {
 		t.Fatalf("config set: %v", err)
 	}
@@ -825,9 +853,9 @@ func TestConfig_SetKey(t *testing.T) {
 
 func TestConfig_UnknownKey(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
-	err := runCmd("config", "nonexistent")
+	err := runCmd("vault", "config", "nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown config key")
 	}
@@ -835,10 +863,10 @@ func TestConfig_UnknownKey(t *testing.T) {
 
 func TestConfig_SetGit(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	out.Reset()
-	err := runCmd("config", "git", "git@github.com:user/vault.git")
+	err := runCmd("vault", "config", "git", "git@github.com:user/vault.git")
 	if err != nil {
 		t.Fatalf("config set git: %v", err)
 	}
@@ -851,11 +879,11 @@ func TestConfig_SetGit(t *testing.T) {
 
 func TestPasswd_Success(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nnewpass123\nnewpass123\n")
 	out.Reset()
-	err := runCmd("passwd")
+	err := runCmd("vault", "passwd")
 	if err != nil {
 		t.Fatalf("passwd: %v", err)
 	}
@@ -865,7 +893,7 @@ func TestPasswd_Success(t *testing.T) {
 
 	setInput("newpass123\n")
 	out.Reset()
-	err = runCmd("list")
+	err = runCmd("secret", "list")
 	if err != nil {
 		t.Fatalf("list with new password: %v", err)
 	}
@@ -873,10 +901,10 @@ func TestPasswd_Success(t *testing.T) {
 
 func TestPasswd_OldPasswordWrong(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("wrongpass\nnewpass123\nnewpass123\n")
-	err := runCmd("passwd")
+	err := runCmd("vault", "passwd")
 	if err == nil {
 		t.Error("expected error for wrong current password")
 	}
@@ -884,11 +912,11 @@ func TestPasswd_OldPasswordWrong(t *testing.T) {
 
 func TestPasswd_EmptyNewPassword(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\n\n\n")
 	out.Reset()
-	err := runCmd("passwd")
+	err := runCmd("vault", "passwd")
 	if err != nil {
 		t.Fatalf("passwd with empty new password: %v", err)
 	}
@@ -899,18 +927,18 @@ func TestPasswd_EmptyNewPassword(t *testing.T) {
 
 func TestPasswd_PreservesEntries(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\nsecretvalue\n")
-	_ = runCmd("add", "github")
+	_ = runCmd("secret", "add", "github")
 
 	setInput("masterpass\nnewpass123\nnewpass123\n")
-	_ = runCmd("passwd")
+	_ = runCmd("vault", "passwd")
 
 	setInput("newpass123\n")
 	out.Reset()
 	resetFlags()
-	err := runCmd("get", "--print", "github")
+	err := runCmd("secret", "get", "--print", "github")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -923,7 +951,7 @@ func TestPasswd_PreservesEntries(t *testing.T) {
 
 func TestInit_WithGit(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
-	err := runCmd("init", "--git")
+	err := runCmd("vault", "init", "--git")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -938,15 +966,15 @@ func TestInit_WithGit(t *testing.T) {
 
 func TestSync_ManualSync(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n\n")
-	_ = runCmd("init", "--git")
+	_ = runCmd("vault", "init", "--git")
 
 	setInput("masterpass\nvalue\n")
-	_ = runCmd("add", "github")
+	_ = runCmd("secret", "add", "github")
 	app.Wait()
 
 	setInput("")
 	out.Reset()
-	err := runCmd("sync")
+	err := runCmd("vault", "sync")
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -957,10 +985,10 @@ func TestSync_ManualSync(t *testing.T) {
 
 func TestSync_NotARepo(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("")
-	err := runCmd("sync")
+	err := runCmd("vault", "sync")
 	if err == nil {
 		t.Error("expected error when vault is not a git repo")
 	}
@@ -993,7 +1021,7 @@ func TestToEnvVar_Conversion(t *testing.T) {
 
 func TestGetPassword_AgentDisabled_FallsThrough(t *testing.T) {
 	setupTestApp(t, "masterpass\nmasterpass\n")
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	setInput("masterpass\n")
 	pw, err := getPassword()
@@ -1013,7 +1041,7 @@ func TestGetPassword_AgentStoreAndRetrieve(t *testing.T) {
 	srv := startTestAgent(t, sock)
 	defer srv.Stop()
 
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	client := agent.NewClient(sock)
 	err := client.Store(app.VaultPath, []byte("masterpass"), 5*time.Minute)
@@ -1040,7 +1068,7 @@ func TestLoadVault_WrongPassword_DoesNotCache(t *testing.T) {
 	srv := startTestAgent(t, sock)
 	defer srv.Stop()
 
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	// Clear the correctly-cached password so we can simulate a wrong entry
 	client := agent.NewClient(sock)
@@ -1076,7 +1104,7 @@ func TestLock_ClearsCache(t *testing.T) {
 	srv := startTestAgent(t, sock)
 	defer srv.Stop()
 
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	client := agent.NewClient(sock)
 	_ = client.Store(app.VaultPath, []byte("masterpass"), 5*time.Minute)
@@ -1101,7 +1129,7 @@ func TestLock_NoAgent(t *testing.T) {
 	out, _, _ := setupTestApp(t, "masterpass\nmasterpass\n")
 	sock := testSocketPath(t)
 	app.SocketPath = sock
-	_ = runCmd("init")
+	_ = runCmd("vault", "init")
 
 	out.Reset()
 	err := runCmd("lock")
@@ -1110,6 +1138,69 @@ func TestLock_NoAgent(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Agent is not running") {
 		t.Errorf("expected not running message: %s", out.String())
+	}
+}
+
+// --- version tests ---
+
+func TestSetVersion_AcceptsSemver(t *testing.T) {
+	oldVersion := version
+	oldCmdVersion := rootCmd.Version
+	t.Cleanup(func() {
+		version = oldVersion
+		rootCmd.Version = oldCmdVersion
+	})
+
+	for _, v := range []string{"0.2.0", "1.2.3", "1.0.0-rc.1", "1.0.0+build.5"} {
+		if err := SetVersion(" " + v + "\n"); err != nil {
+			t.Fatalf("SetVersion(%q): %v", v, err)
+		}
+		if version != v {
+			t.Errorf("expected version %q, got %q", v, version)
+		}
+		if rootCmd.Version != v {
+			t.Errorf("expected --version to report %q, got %q", v, rootCmd.Version)
+		}
+	}
+}
+
+func TestSetVersion_RejectsInvalid(t *testing.T) {
+	oldVersion := version
+	t.Cleanup(func() { version = oldVersion })
+
+	for _, v := range []string{"", "dev", "0.2", "0.2.0.1", "v0.2.0", "01.2.3"} {
+		if err := SetVersion(v); err == nil {
+			t.Errorf("SetVersion(%q) expected an error", v)
+		}
+	}
+	if version != oldVersion {
+		t.Errorf("invalid versions must not change the version, got %q", version)
+	}
+}
+
+func TestRepoVersionFile_IsSemver(t *testing.T) {
+	data, err := os.ReadFile("../VERSION")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateVersion(strings.TrimSpace(string(data))); err != nil {
+		t.Errorf("VERSION is not valid: %v", err)
+	}
+}
+
+func TestSetVersion_UpdatesBanner(t *testing.T) {
+	oldVersion := version
+	oldLong := rootCmd.Long
+	t.Cleanup(func() {
+		version = oldVersion
+		rootCmd.Long = oldLong
+	})
+
+	SetVersion("0.3.0")
+
+	want := "Manage secrets from your terminal • v0.3.0"
+	if !strings.Contains(rootCmd.Long, want) {
+		t.Errorf("expected banner to contain %q, got: %s", want, rootCmd.Long)
 	}
 }
 
@@ -1189,7 +1280,7 @@ func TestDestroy_SpecificVault(t *testing.T) {
 
 	setInput("\n")
 	resetFlags()
-	_ = runCmd("init", "--vault", "work")
+	_ = runCmd("vault", "init", "--vault", "work")
 
 	if _, err := os.Stat(app.VaultPath); err != nil {
 		t.Fatalf("vault should exist: %v", err)
@@ -1197,7 +1288,7 @@ func TestDestroy_SpecificVault(t *testing.T) {
 
 	setInput("yes\n")
 	out.Reset()
-	err := runCmd("destroy", "--vault", "work")
+	err := runCmd("vault", "destroy", "--vault", "work")
 	if err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
@@ -1227,11 +1318,11 @@ func TestDestroy_Aborted(t *testing.T) {
 
 	setInput("\n")
 	resetFlags()
-	_ = runCmd("init", "--vault", "work")
+	_ = runCmd("vault", "init", "--vault", "work")
 
 	setInput("no\n")
 	out.Reset()
-	err := runCmd("destroy", "--vault", "work")
+	err := runCmd("vault", "destroy", "--vault", "work")
 	if err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
@@ -1253,7 +1344,7 @@ func TestDestroy_VaultNotFound(t *testing.T) {
 	vaultName = "nonexistent"
 
 	setInput("")
-	err := runCmd("destroy", "--vault", "nonexistent")
+	err := runCmd("vault", "destroy", "--vault", "nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent vault")
 	}

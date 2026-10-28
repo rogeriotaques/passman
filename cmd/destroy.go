@@ -79,5 +79,5 @@ func destroyVault(vaultsDir, name string) error {
 }
 
 func init() {
-	rootCmd.AddCommand(destroyCmd)
+	vaultCmd.AddCommand(destroyCmd)
 }

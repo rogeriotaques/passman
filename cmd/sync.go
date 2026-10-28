@@ -15,7 +15,7 @@ var syncCmd = &cobra.Command{
 		vaultDir := filepath.Dir(app.VaultPath)
 
 		if !psync.IsRepo(vaultDir) {
-			return fmt.Errorf("vault is not a git repository (use 'passman init --git' first)")
+			return fmt.Errorf("vault is not a git repository (use 'passman vault init --git' first)")
 		}
 
 		if err := psync.Sync(vaultDir); err != nil {
@@ -28,5 +28,5 @@ var syncCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(syncCmd)
+	vaultCmd.AddCommand(syncCmd)
 }

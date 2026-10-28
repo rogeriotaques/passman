@@ -85,5 +85,5 @@ func listInteractive(v *vault.Vault, entries []vault.Entry) error {
 
 func init() {
 	listCmd.Flags().BoolP("all", "a", false, "show all entries without truncation")
-	rootCmd.AddCommand(listCmd)
+	secretCmd.AddCommand(listCmd)
 }

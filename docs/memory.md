@@ -1,5 +1,52 @@
 # Work Log
 
+## 2026-10-28: Show version in the help banner
+
+- **Change**: split `banner` into `bannerArt` + `bannerText()` in `cmd/root.go`. The tagline now ends with `• v<version>`, e.g. `Manage secrets from your terminal • v0.3.0`.
+- **Wiring**: `SetVersion` also refreshes `rootCmd.Long` — Cobra copied it at init, the same trap as `rootCmd.Version`.
+- **Tests**: `TestSetVersion_UpdatesBanner`.
+- **Deployed**: rebuilt and installed `/usr/local/bin/passman` (0.3.0).
+
+## 2026-10-28: Group CLI by noun (0.3.0)
+
+- **Change**: top-level commands grouped by noun. New tree:
+  - `secret`: `add`, `get`, `list`, `remove`, `export`, `import`
+  - `vault`: `init`, `list`, `passwd`, `config`, `sync`, `destroy`
+  - root: `generate`, `lock`, `upgrade` (+ hidden `_agent`)
+- **Renames**: `rm` → `remove`; `vaults` → `vault list`. No aliases or shims (single user).
+- **Files**: new `cmd/secret.go`, `cmd/vault.go`; `cmd/rm.go` → `cmd/remove.go`; `cmd/vaults.go` → `cmd/vault_list.go`; registrations moved from `rootCmd` to the group commands.
+- **Tests**: every `runCmd` call updated; new `TestVaultList`. Full suite green.
+- **Docs**: `README.md`, `docs/DOCS.md` (rewritten command sections), `docs/knowledge/commands.md`.
+- **Version**: bumped minor to `0.3.0`; rebuilt and installed `/usr/local/bin/passman`.
+
+## 2026-10-28: Enforce semver on `VERSION`
+
+- **Change**: added `cmd/version.go` with a strict semver pattern (`MAJOR.MINOR.PATCH`, optional pre-release/build, no leading zeros). `version` and `SetVersion` moved there from `root.go`.
+- **Behaviour**:
+  - `SetVersion` returns an error for empty/invalid values; `main.go` prints it and exits 1.
+  - `fetchLatestVersion` validates the clone's `VERSION` before `upgrade` builds.
+  - `TestRepoVersionFile_IsSemver` fails CI if the committed `VERSION` is malformed.
+- **Tests**: `TestSetVersion_AcceptsSemver`, `TestSetVersion_RejectsInvalid`, `TestFetchLatestVersion_Invalid`, `TestRepoVersionFile_IsSemver`.
+- **Deployed**: rebuilt `/usr/local/bin/passman`; reports `0.2.0`.
+- **Files changed**: `cmd/version.go`, `cmd/root.go`, `cmd/upgrade.go`, `main.go`, `cmd/cmd_test.go`, `cmd/upgrade_test.go`, `docs/DOCS.md`, `docs/knowledge/tech-stack.md`
+
+## 2026-10-28: Switch to semver (0.2.0)
+
+- **Change**: replaced the commit-hash version with semver. `VERSION` at the repo root is the single source of truth (`0.2.0`).
+- **Wiring**: `main.go` embeds `VERSION` with `//go:embed` and calls `cmd.SetVersion`, which updates both the package var and `rootCmd.Version` (Cobra copies the latter at init). `version = "dev"` remains only as a fallback for tests/tools.
+- **upgrade**: `fetchLatestCommitHash` → `fetchLatestVersion`; it reads `VERSION` from the shallow clone. The build no longer injects `-ldflags -X ...version=<hash>` because the clone embeds its own `VERSION`. Output now shows semver.
+- **Tests**: `TestFetchLatestVersion`, `TestFetchLatestVersion_MissingFile`, `TestSetVersion_UpdatesReportedVersion`, `TestSetVersion_EmptyKeepsCurrent`; upgrade tests now use a fake repo with `VERSION`.
+- **Deployed**: rebuilt `/usr/local/bin/passman`; `passman --version` reports `0.2.0`.
+- **Files changed**: `VERSION`, `main.go`, `cmd/root.go`, `cmd/upgrade.go`, `cmd/upgrade_test.go`, `cmd/cmd_test.go`, `README.md`, `docs/DOCS.md`, `docs/knowledge/tech-stack.md`
+
+## 2026-10-28: Verify `add` on a missing vault leaves no lock
+
+- **Report**: a failed `add` on a nonexistent vault supposedly locked the vault and blocked `init`.
+- **Finding**: the source already returns `ErrVaultNotFound` before locking (`Store.Exists()` check in `Load` and in `loadVault`), so it creates no directory and no `.lock` file. The installed binary (`/usr/local/bin/passman`, commit 4c0534f, May 26) still prompts for the password and leaves `<vault>.enc.lock` plus the vault directory, but `init` still succeeded in the repro.
+- **Change**: added `TestAdd_NonexistentVault_CreatesNoFiles` to pin "no directory, no lock file" after a failed add.
+- **Deployed**: rebuilt `/usr/local/bin/passman` from the current tree (version `e34c0b3`), replacing the stale May 26 build.
+- **Files changed**: `cmd/cmd_test.go`
+
 ## 2026-10-28: Stop tests from spawning agent processes
 
 - **Bug**: `cmd` tests that touched a non-empty `SocketPath` reached `cacheInAgent` → `agent.EnsureAgent`, which re-executes `os.Executable()`. Under `go test` that is the test binary, and Go's flag parser stops at the first non-flag arg (`_agent`), so the child ran the **entire test suite again** — each pass spawning more children, exponentially.

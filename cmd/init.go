@@ -105,5 +105,5 @@ func resolveVaultPath(name string) {
 
 func init() {
 	initCmd.Flags().Bool("git", false, "initialize git repository for vault sync")
-	rootCmd.AddCommand(initCmd)
+	vaultCmd.AddCommand(initCmd)
 }

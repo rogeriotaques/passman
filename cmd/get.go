@@ -50,5 +50,5 @@ func copyToClipboard(value string) error {
 
 func init() {
 	getCmd.Flags().BoolP("print", "p", false, "print secret to stdout instead of clipboard")
-	rootCmd.AddCommand(getCmd)
+	secretCmd.AddCommand(getCmd)
 }

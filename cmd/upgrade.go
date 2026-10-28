@@ -36,20 +36,20 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(app.Out, "• Checking new version available...")
 
-	commitHash, err := fetchLatestCommitHash(repoURL)
+	latestVersion, err := fetchLatestVersion(repoURL)
 	if err != nil {
 		return fmt.Errorf("failed to check latest version: %w", err)
 	}
-	if commitHash == "" {
+	if latestVersion == "" {
 		return fmt.Errorf("could not determine latest version")
 	}
 
-	if version == commitHash {
+	if version == latestVersion {
 		fmt.Fprintln(app.Out, "• Already up to date.")
 		return nil
 	}
 
-	fmt.Fprintf(app.Out, "• Updating to %s...\n", commitHash)
+	fmt.Fprintf(app.Out, "• Updating to %s...\n", latestVersion)
 
 	tempDir, err := os.MkdirTemp("", "passman-upgrade-*")
 	if err != nil {
@@ -67,8 +67,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	}
 
 	newBinary := filepath.Join(tempDir, "passman-new")
-	ldflags := fmt.Sprintf("-X github.com/rogerio/passman/cmd.version=%s", commitHash)
-	build := exec.Command("go", "build", "-ldflags", ldflags, "-o", newBinary, ".")
+	build := exec.Command("go", "build", "-o", newBinary, ".")
 	build.Dir = cloneDir
 	build.Stdout = app.Out
 	build.Stderr = app.ErrOut
@@ -89,12 +88,12 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to replace current binary: %w", err)
 	}
 
-	fmt.Fprintf(app.Out, "• Done. Upgraded to version %s\n", commitHash)
+	fmt.Fprintf(app.Out, "• Done. Upgraded to version %s\n", latestVersion)
 	return nil
 }
 
-func fetchLatestCommitHash(repo string) (string, error) {
-	// Shallow clone master to temp dir to read HEAD
+func fetchLatestVersion(repo string) (string, error) {
+	// Shallow clone master to temp dir to read the VERSION file
 	tmpDir, err := os.MkdirTemp("", "passman-check-*")
 	if err != nil {
 		return "", err
@@ -108,11 +107,16 @@ func fetchLatestCommitHash(repo string) (string, error) {
 		return "", err
 	}
 
-	out, err := exec.Command("git", "-C", cloneDir, "rev-parse", "--short", "HEAD").Output()
+	data, err := os.ReadFile(filepath.Join(cloneDir, "VERSION"))
 	if err != nil {
+		return "", fmt.Errorf("read VERSION: %w", err)
+	}
+
+	latest := strings.TrimSpace(string(data))
+	if err := validateVersion(latest); err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return latest, nil
 }
 
 func replaceBinary(src, dst string) error {
