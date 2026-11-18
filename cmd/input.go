@@ -32,19 +32,27 @@ func resetInputReader() {
 }
 
 func readPassword(prompt string) ([]byte, error) {
-	fmt.Fprint(app.ErrOut, prompt)
-
-	if f, ok := app.In.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+	if f, ok := app.In.(*os.File); ok && isTerminal(f) {
+		fmt.Fprint(app.ErrOut, prompt)
 		pw, err := term.ReadPassword(int(f.Fd()))
 		fmt.Fprintln(app.ErrOut)
 		return pw, err
 	}
 
+	if app.GUIPassword {
+		return app.Prompter.Secret(strings.TrimSpace(prompt))
+	}
+
+	fmt.Fprint(app.ErrOut, prompt)
 	line, err := readLineFromReader()
 	if err != nil {
 		return nil, err
 	}
 	return []byte(line), nil
+}
+
+func isTerminal(f *os.File) bool {
+	return term.IsTerminal(int(f.Fd()))
 }
 
 func readLineFromReader() (string, error) {
@@ -109,7 +117,7 @@ func cacheInAgent(pw []byte) {
 	if !app.AutoStartAgent {
 		return
 	}
-	if ensureAgent(app.SocketPath) == nil {
+	if ensureAgent(app.SocketPath, app.SSHSocketPath, app.SSHUnlockVault) == nil {
 		client = agent.NewClient(app.SocketPath)
 		_ = client.Store(app.VaultPath, pw, ttl)
 	}

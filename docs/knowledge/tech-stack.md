@@ -11,8 +11,9 @@
 |---------|---------|
 | `github.com/spf13/cobra` | CLI command framework |
 | `github.com/atotto/clipboard` | System clipboard access |
-| `golang.org/x/crypto` | Argon2id key derivation |
+| `golang.org/x/crypto` | Argon2id key derivation; `ssh` and `ssh/agent` for the SSH agent |
 | `golang.org/x/term` | Terminal raw mode, password reading |
+| `golang.org/x/sys` | Peer process lookup on the SSH agent socket |
 
 ## Crypto
 
@@ -34,12 +35,14 @@
 main.go              → entrypoint
 cmd/                 → CLI commands (cobra), test helpers, input handling
 internal/
-  agent/             → Session caching daemon (Unix socket)
+  agent/             → Session caching daemon (Unix socket) + SSH agent listener
   clipboard/         → Clipboard copy with auto-clear
   crypto/            → AES-256-GCM + Argon2id
   generate/          → Password generation
   importer/          → .env and CSV parsers
+  prompt/            → Graphical dialogs (osascript on macOS, ssh-askpass elsewhere)
   selector/          → Interactive terminal selector (ANSI + raw mode)
+  sshagent/          → Vault-backed SSH agent keyring (agent.ExtendedAgent)
   sync/              → Git operations and config
   vault/             → Vault/Entry types, CRUD, encrypted file I/O
 ```
@@ -49,3 +52,5 @@ internal/
 - Vault files: `~/.passman/vaults/<name>/vault.enc`
 - Config files: `~/.passman/vaults/<name>/config.json`
 - Agent socket: `~/.passman/agent.sock`
+- SSH agent socket: `~/.passman/ssh-agent.sock`
+- SSH_ASKPASS helper: `~/.passman/askpass`

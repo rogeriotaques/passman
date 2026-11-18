@@ -41,10 +41,13 @@ var configCmd = &cobra.Command{
 			}
 
 			if args[0] == "git" {
-				if psync.IsRepo(vaultDir) {
-					if err := psync.SetRemote(vaultDir, args[1]); err != nil {
-						return fmt.Errorf("set git remote: %w", err)
+				if !psync.IsRepo(vaultDir) {
+					if err := psync.Init(vaultDir); err != nil {
+						return fmt.Errorf("git init: %w", err)
 					}
+				}
+				if err := psync.SetRemote(vaultDir, args[1]); err != nil {
+					return fmt.Errorf("set git remote: %w", err)
 				}
 			}
 

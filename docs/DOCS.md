@@ -50,7 +50,12 @@ passman vault destroy [--vault vault-name]
 # Generate a random password (no vault needed)
 passman generate [--length <n>] [--no-symbols]
 
-# Immediately lock the background agent and clear cached passwords
+# Use the vault as an SSH agent: import keys, list them, wire ssh to passman
+passman ssh add <private-key-file> [--name NAME] [--vault vault-name]
+passman ssh list [--vault vault-name]
+eval "$(passman ssh env)"
+
+# Immediately lock the background agent and clear cached passwords and SSH keys
 passman lock
 
 # Upgrade passman to the latest version
@@ -65,6 +70,7 @@ Vaults are stored as `~/.passman/vaults/<name>/vault.enc`.
 | ----- | -------- |
 | `passman secret` | `add`, `get`, `list`, `remove`, `export`, `import` |
 | `passman vault` | `init`, `list`, `passwd`, `config`, `sync`, `destroy` |
+| `passman ssh` | `add`, `list`, `env`, `askpass` |
 | `passman` | `generate`, `lock`, `upgrade` |
 
 ## Commands
@@ -226,7 +232,11 @@ passman vault config session-timeout 30
 | --- | ------ | ------- | ----------- |
 | `auto-sync` | `on` / `off` | `off` | Automatically sync after writes |
 | `session-timeout` | minutes | `15` | Minutes before cached password expires (0 to disable) |
-| `git` | set `git@github.com:user/vault.git` | | List or set the git remote URL for the vault repository |
+| `git` | set `git@github.com:user/vault.git` | | Set the git remote for the vault (initialises the repository on branch `main` if needed) |
+| `ssh-timeout` | minutes | `480` | Minutes the agent serves this vault's SSH keys after an unlock (0 disables SSH keys for the vault) |
+| `ssh-confirm` | `on` / `off` | `on` | Ask for approval (dialog) before SSH signatures |
+| `ssh-confirm-grace` | seconds | `60` | After an approval, the same program may use the same key without asking for this long (0 asks every time) |
+| `ssh-unlock-prompt` | `on` / `off` | `on` | Let the agent offer to unlock this vault (dialog) when ssh finds no keys loaded |
 
 ---
 
@@ -312,10 +322,92 @@ passman generate --no-symbols
 
 ---
 
+### ssh add
+
+Import an SSH private key file into the vault so the agent can serve it. A
+passphrase-protected file is decrypted (you are asked for its passphrase) and
+stored without it: the vault's encryption protects it from here on. The file
+itself is left untouched; delete it once you have a backup.
+
+```bash
+# Stored as ssh/id_ed25519
+passman ssh add ~/.ssh/id_ed25519
+
+# Custom entry name
+passman ssh add ~/.ssh/aws.pem --name ssh/aws-prod
+```
+
+The command prints the key's fingerprint and public key line. Supported key
+types: ed25519, RSA, ECDSA (anything `ssh.MarshalPrivateKey` understands).
+Files larger than 64 KiB are rejected.
+
+---
+
+### ssh list
+
+Show the name, type, and fingerprint of every private key in the vault.
+Unlocking the vault for this command also (re)loads the keys into the running
+agent.
+
+```bash
+passman ssh list
+```
+
+---
+
+### ssh env
+
+Print the exports that route ssh through passman and (re)write the small
+`SSH_ASKPASS` helper at `~/.passman/askpass`:
+
+```bash
+eval "$(passman ssh env)"     # add this line to ~/.zshrc or ~/.bashrc
+```
+
+Output:
+
+```bash
+export SSH_AUTH_SOCK='/Users/you/.passman/ssh-agent.sock'
+export SSH_ASKPASS='/Users/you/.passman/askpass'
+export SSH_ASKPASS_REQUIRE='force'
+```
+
+`force` is required because ssh only consults `SSH_ASKPASS` when `DISPLAY` is
+set otherwise, which terminals on macOS never do.
+
+`ssh env` also starts the agent when it is not running (after a reboot or
+logout), so `SSH_AUTH_SOCK` always points at a live socket. The agent then
+offers to unlock the default vault the first time a client lists keys (ssh
+connecting, `ssh-add -l`). With `force`, every ssh
+prompt (passphrases, host key confirmations, passwords) goes through
+`passman ssh askpass`, which answers on your terminal when there is one and
+through a dialog when there is not.
+
+---
+
+### ssh askpass
+
+The `SSH_ASKPASS` implementation; ssh runs it, never you. It receives the prompt
+as its only argument and prints the answer:
+
+- `Enter passphrase for key '<file>'` prompts are answered from the vault entry
+  `ssh/passphrase/<file name>` when it exists (for example
+  `ssh/passphrase/id_ed25519`). Unlocking the vault may ask for the master
+  password first. Retry prompts (`Bad passphrase, try again`) always ask you,
+  so a stale vault value cannot loop.
+- Other secret prompts ask you (terminal or dialog).
+- `SSH_ASKPASS_PROMPT=none` prompts (host key confirmations) show a visible
+  input.
+- `SSH_ASKPASS_PROMPT=confirm` prompts show a Deny/Allow dialog and exit `0`
+  for Allow, `1` for Deny.
+
+---
+
 ### lock
 
-Immediately clear all cached master passwords from the background agent. The
-next vault operation will prompt for the password again.
+Immediately clear all cached master passwords and loaded SSH keys from the
+background agent. The next vault operation will prompt for the password again,
+and ssh finds no keys until a vault is unlocked.
 
 ```bash
 passman lock
@@ -348,6 +440,34 @@ Passman caches the master password in a background agent (similar to
 - The socket is created with `0600` permissions (owner-only access)
 - Passwords are held in memory with a configurable TTL
 - The agent auto-starts on first use and auto-shuts down when all entries expire
+  (unless it serves SSH, see below)
+
+## SSH agent
+
+The same background agent serves the SSH agent protocol on
+`~/.passman/ssh-agent.sock`. Point `SSH_AUTH_SOCK` at it with
+`eval "$(passman ssh env)"`.
+
+- Whenever a vault is unlocked (any command that reads it), the agent loads the
+  vault's private keys and serves them for `ssh-timeout` minutes (default 8
+  hours). `passman lock` drops them immediately.
+- Private keys never leave the agent. ssh only receives signatures, and with
+  `ssh-confirm on` (the default) a signature pops a Deny/Allow dialog naming
+  the requesting process and the key. One approval covers the same program
+  (same executable path, e.g. `/usr/bin/ssh`) and key for `ssh-confirm-grace`
+  seconds, so a `git pull && git push` asks once, not three times. A denial
+  revokes the approval; `passman lock` clears them all.
+- If ssh asks for keys while none are loaded, the agent offers to unlock the
+  default vault through a dialog. That unlock loads SSH keys only: the master
+  password is not cached for other commands, so a program connecting to the
+  socket cannot widen its access by triggering the prompt. Prompts are
+  rate-limited: 10 seconds, doubling after each cancelled prompt (up to 15
+  minutes), reset by a successful unlock. Turn the prompt off with
+  `passman vault config ssh-unlock-prompt off` and unlock explicitly with
+  `passman ssh list` instead.
+- `ssh-add` cannot add, remove, or lock keys in this agent: the vault is the
+  only way in or out.
+- A vault with `ssh-timeout 0` never contributes keys.
 
 ## Security
 
@@ -357,5 +477,6 @@ Passman caches the master password in a background agent (similar to
 - **File locking**: advisory flock prevents concurrent writes
 - **Memory zeroing**: passwords, keys, and plaintext are zeroed after use
 - **Clipboard clearing**: passwords auto-clear from clipboard after 30 seconds
-- **Agent security**: Unix socket with 0600 permissions, passwords zeroed on
-  expiry and lock
+- **Agent security**: Unix sockets with 0600 permissions, passwords zeroed on
+  expiry and lock; SSH keys are served as signatures only, each one
+  approved by you by default

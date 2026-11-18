@@ -11,8 +11,18 @@ import (
 
 var ErrNotARepo = errors.New("not a git repository")
 
+// branch is fixed so Sync does not depend on the user's init.defaultBranch.
+const branch = "main"
+
+// ignoreRules keeps the advisory lock and atomic-write temp files out of the
+// repository; only the encrypted vault and its config belong there.
+const ignoreRules = "*.lock\n*.tmp\n"
+
 func Init(dir string) error {
-	return gitCmd(dir, "init").Run()
+	if err := gitCmd(dir, "init", "-b", branch).Run(); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(ignoreRules), 0600)
 }
 
 func IsRepo(dir string) bool {
@@ -55,17 +65,27 @@ func Sync(dir string) error {
 		}
 	}
 
-	if HasRemote(dir) {
-		if err := gitCmd(dir, "pull", "--rebase", "origin", "main").Run(); err != nil {
-			return fmt.Errorf("git pull: %w", err)
-		}
-
-		if err := gitCmd(dir, "push", "-u", "origin", "main").Run(); err != nil {
-			return fmt.Errorf("git push: %w", err)
-		}
+	if !HasRemote(dir) {
+		return nil
 	}
 
+	// Push first: every connection may cost the user an SSH approval, and the
+	// remote is usually either empty or already behind this machine. Only a
+	// rejected push (remote moved on) pays for a pull.
+	if push(dir) == nil {
+		return nil
+	}
+	if err := gitCmd(dir, "pull", "--rebase", "origin", branch).Run(); err != nil {
+		return fmt.Errorf("git pull: %w", err)
+	}
+	if err := push(dir); err != nil {
+		return fmt.Errorf("git push: %w", err)
+	}
 	return nil
+}
+
+func push(dir string) error {
+	return gitCmd(dir, "push", "-u", "origin", branch).Run()
 }
 
 func hasChanges(dir string) bool {
@@ -77,13 +97,18 @@ func hasChanges(dir string) bool {
 }
 
 func gitCmd(dir string, args ...string) *exec.Cmd {
-	cmd := exec.Command("git", args...)
+	// Vault commits are machine-made bookkeeping: never sign them (signing
+	// would prompt for a key passphrase from a background goroutine) and keep
+	// the identity fixed.
+	fullArgs := append([]string{"-c", "commit.gpgsign=false"}, args...)
+	cmd := exec.Command("git", fullArgs...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=passman",
 		"GIT_AUTHOR_EMAIL=passman@localhost",
 		"GIT_COMMITTER_NAME=passman",
 		"GIT_COMMITTER_EMAIL=passman@localhost",
+		"GIT_TERMINAL_PROMPT=0",
 	)
 	return cmd
 }

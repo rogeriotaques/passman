@@ -19,12 +19,17 @@ specific vault (default: "default").
 | `vault sync` | `cmd/sync.go` | Git sync (commit + pull + push) |
 | `vault passwd` | `cmd/passwd.go` | Change master password |
 | `vault destroy` | `cmd/destroy.go` | Permanently delete a vault or all vaults |
+| `ssh add` | `cmd/ssh_add.go` | Import a private key file into the vault (strips its passphrase) |
+| `ssh list` | `cmd/ssh_list.go` | List vault keys with type and fingerprint |
+| `ssh env` | `cmd/ssh_env.go` | Print SSH_AUTH_SOCK/SSH_ASKPASS exports, write `~/.passman/askpass` |
+| `ssh askpass` | `cmd/ssh_askpass.go` | SSH_ASKPASS implementation (vault lookup, terminal, or dialog) |
 | `generate` | `cmd/generate.go` | Generate a random password |
 | `lock` | `cmd/lock.go` | Clear agent cached passwords |
 | `upgrade` | `cmd/upgrade.go` | Upgrade to the latest version |
 
-The groups are defined in `cmd/secret.go` and `cmd/vault.go`; the hidden
-`_agent` daemon stays a root command.
+The groups are defined in `cmd/secret.go`, `cmd/vault.go`, and `cmd/ssh.go`;
+the hidden `_agent` daemon stays a root command. `_agent --ssh-socket <path>
+--ssh-vault <path>` turns on the SSH agent (set by `agent.EnsureAgent`).
 
 ## DRY Helpers
 
@@ -33,6 +38,9 @@ The groups are defined in `cmd/secret.go` and `cmd/vault.go`; the hidden
 - `copyToClipboard()` — copy to clipboard with auto-clear message
 - `toEnvVar()` — convert entry name to SCREAMING_SNAKE_CASE
 - `shellEscape()` — escape single quotes for shell safety
+- `sshKeyEntries()` / `describeKey()` — find private keys in a vault, format `name type fingerprint`
+- `readPassword()` — terminal, then dialog (`app.GUIPassword`), then stdin line
+- `attachTTY()` — askpass reopens `app.TTYPath` so prompts reach the terminal when stdin is redirected
 
 ## Entry Model
 
@@ -52,3 +60,14 @@ Simple key-value. Name is case-insensitive for lookup. Value is the secret.
 | `auto-sync` | `on`/`off` | `off` | Auto git sync after writes |
 | `session-timeout` | minutes | `15` | Agent cache TTL (0 disables) |
 | `git` | URL | empty | Git remote URL for the vault |
+| `ssh-timeout` | minutes | `480` | How long the agent serves the vault's SSH keys (0 disables) |
+| `ssh-confirm` | `on`/`off` | `on` | Dialog approval before SSH signatures |
+| `ssh-confirm-grace` | seconds | `60` | Approval reuse window per (program, key); 0 asks every time |
+| `ssh-unlock-prompt` | `on`/`off` | `on` | Agent may ask to unlock the vault when ssh finds no keys |
+
+## Entry naming for SSH
+
+- `ssh/<key file name>` — private keys imported by `ssh add` (any entry whose
+  value parses as an unencrypted private key is served, whatever its name)
+- `ssh/passphrase/<key file name>` — passphrase answered by `ssh askpass` for a
+  file-based key

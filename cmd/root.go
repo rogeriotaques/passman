@@ -10,6 +10,7 @@ import (
 
 	"github.com/rogerio/passman/internal/clipboard"
 	"github.com/rogerio/passman/internal/crypto"
+	"github.com/rogerio/passman/internal/prompt"
 	psync "github.com/rogerio/passman/internal/sync"
 	"github.com/rogerio/passman/internal/vault"
 	"github.com/spf13/cobra"
@@ -17,12 +18,26 @@ import (
 )
 
 type App struct {
-	VaultPath   string
-	SocketPath  string
+	VaultPath string
+	// SocketPath is the agent's control socket; SSHSocketPath is where it
+	// serves the SSH agent protocol. SSHUnlockVault is the vault the agent
+	// offers to unlock when an SSH client finds no keys loaded.
+	SocketPath     string
+	SSHSocketPath  string
+	SSHUnlockVault string
+	// AskpassPath is the SSH_ASKPASS helper written by `ssh env`.
+	AskpassPath string
 	In          io.Reader
 	Out         io.Writer
 	ErrOut      io.Writer
 	Clipboard   clipboard.Clipboard
+	// Prompter reaches the user through dialogs when there is no terminal.
+	Prompter prompt.Prompter
+	// GUIPassword lets readPassword fall back to Prompter when stdin is not a
+	// terminal, instead of reading a line from stdin. TTYPath is the
+	// controlling terminal askpass attaches to when stdin is redirected.
+	GUIPassword bool
+	TTYPath     string
 	KDFParams   crypto.KDFParams
 	Interactive bool
 	// AutoStartAgent lets a command start the background agent when it is not
@@ -78,6 +93,8 @@ func (a *App) saveAndSync(store *vault.Store, v *vault.Vault, password []byte) e
 	if err := store.Save(v, password); err != nil {
 		return err
 	}
+	// Re-announce the vault so a running agent reloads its SSH keys.
+	cacheInAgent(password)
 	a.backgroundSync()
 	return nil
 }
@@ -128,19 +145,32 @@ func init() {
 			if name == "" {
 				name = "default"
 			}
-			app.VaultPath = filepath.Join(baseDir, "vaults", name, "vault.enc")
+			app.VaultPath = vaultPathFor(baseDir, name)
 			if app.SocketPath == "" {
 				app.SocketPath = filepath.Join(baseDir, "agent.sock")
+				app.SSHSocketPath = filepath.Join(baseDir, "ssh-agent.sock")
+				app.SSHUnlockVault = vaultPathFor(baseDir, "default")
+				app.AskpassPath = filepath.Join(baseDir, "askpass")
 			}
 		}
 		if app.Clipboard == nil {
 			app.Clipboard = &clipboard.SystemClipboard{}
+		}
+		if app.Prompter == nil {
+			app.Prompter = prompt.System()
+		}
+		if app.TTYPath == "" {
+			app.TTYPath = "/dev/tty"
 		}
 		if f, ok := app.Out.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 			app.Interactive = true
 		}
 		return nil
 	}
+}
+
+func vaultPathFor(baseDir, name string) string {
+	return filepath.Join(baseDir, "vaults", name, "vault.enc")
 }
 
 func Execute() {

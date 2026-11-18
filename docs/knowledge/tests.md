@@ -34,6 +34,8 @@ go test ./cmd/ -run TestAdd_And_Get -v
 - `startTestAgent(t, sock)` — start a test agent server
 - `stubEnsureAgent(t, fn)` — replace the agent spawner so tests can assert it is not called
 - `setupTestApp` sets `app.AutoStartAgent = false`; real commands keep it `true`
+- `setupTestApp` installs a `prompt.Mock` and points `app.TTYPath` at `/dev/null`, so no dialog or terminal is ever touched by tests
+- `cmd/ssh_test.go`: `initVault(t)`, `setupOutput(t, input)` for follow-up commands on the same vault, key file generators (`ed25519KeyFile`, `rsaKeyFile`)
 
 ### Fast KDF Params
 
@@ -49,9 +51,11 @@ the ~300ms real Argon2id cost on each encrypt/decrypt operation.
 | `internal/importer` | env_test.go, csv_test.go |
 | `internal/generate` | generate_test.go |
 | `internal/sync` | config_test.go, git_test.go |
-| `internal/agent` | agent_test.go |
+| `internal/agent` | agent_test.go, ssh_test.go |
+| `internal/prompt` | prompt_test.go (fake osascript) |
+| `internal/sshagent` | keyring_test.go (keyring + agent protocol over a real socket) |
 | `internal/selector` | selector_test.go |
-| `cmd` | cmd_test.go (integration) |
+| `cmd` | cmd_test.go (integration), ssh_test.go (ssh commands) |
 
 ## Key Testing Patterns
 

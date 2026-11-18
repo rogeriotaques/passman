@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadConfig_Default(t *testing.T) {
@@ -240,5 +241,141 @@ func TestConfig_Git_RoundTrip(t *testing.T) {
 	val, _ := loaded.Get("git")
 	if val != "https://github.com/user/vault.git" {
 		t.Errorf("expected git URL after round trip, got %q", val)
+	}
+}
+
+func TestConfig_Keys_IncludeSSH(t *testing.T) {
+	keys := ConfigKeys()
+	expected := map[string]bool{"ssh-timeout": true, "ssh-confirm": true}
+	for _, k := range keys {
+		delete(expected, k)
+	}
+	if len(expected) > 0 {
+		t.Errorf("missing config keys: %v", expected)
+	}
+}
+
+func TestConfig_SSHTimeout_Default(t *testing.T) {
+	cfg := &Config{}
+	val, err := cfg.Get("ssh-timeout")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "480" {
+		t.Errorf("expected default '480', got %q", val)
+	}
+	if cfg.SSHKeyTTL() != 480*time.Minute {
+		t.Errorf("expected 480m TTL, got %v", cfg.SSHKeyTTL())
+	}
+}
+
+func TestConfig_SSHTimeout_SetAndValidate(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.Set("ssh-timeout", "60"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SSHKeyTTL() != time.Hour {
+		t.Errorf("expected 1h TTL, got %v", cfg.SSHKeyTTL())
+	}
+	if err := cfg.Set("ssh-timeout", "0"); err != nil {
+		t.Fatalf("zero must be accepted (disables SSH keys): %v", err)
+	}
+	if cfg.SSHKeyTTL() != 0 {
+		t.Errorf("expected 0 TTL, got %v", cfg.SSHKeyTTL())
+	}
+	if err := cfg.Set("ssh-timeout", "-5"); err == nil {
+		t.Error("expected error for negative timeout")
+	}
+	if err := cfg.Set("ssh-timeout", "soon"); err == nil {
+		t.Error("expected error for non-numeric timeout")
+	}
+}
+
+func TestConfig_SSHConfirm_DefaultOn(t *testing.T) {
+	cfg := &Config{}
+	val, err := cfg.Get("ssh-confirm")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "on" || !cfg.SSHConfirmEnabled() {
+		t.Errorf("expected confirm on by default, got %q", val)
+	}
+}
+
+func TestConfig_SSHConfirm_SetOff(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.Set("ssh-confirm", "off"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SSHConfirmEnabled() {
+		t.Error("expected confirm off")
+	}
+	if err := cfg.Set("ssh-confirm", "maybe"); err == nil {
+		t.Error("expected error for invalid value")
+	}
+}
+
+func TestConfig_SSH_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{}
+	_ = cfg.Set("ssh-timeout", "30")
+	_ = cfg.Set("ssh-confirm", "off")
+	_ = SaveConfig(dir, cfg)
+
+	loaded, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.SSHKeyTTL() != 30*time.Minute || loaded.SSHConfirmEnabled() {
+		t.Errorf("round trip lost ssh settings: ttl=%v confirm=%v", loaded.SSHKeyTTL(), loaded.SSHConfirmEnabled())
+	}
+}
+
+func TestConfig_SSHUnlockPrompt_DefaultOn(t *testing.T) {
+	cfg := &Config{}
+	val, err := cfg.Get("ssh-unlock-prompt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "on" || !cfg.SSHUnlockPromptEnabled() {
+		t.Errorf("expected unlock prompt on by default, got %q", val)
+	}
+	if err := cfg.Set("ssh-unlock-prompt", "off"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SSHUnlockPromptEnabled() {
+		t.Error("expected unlock prompt off")
+	}
+	if err := cfg.Set("ssh-unlock-prompt", "sometimes"); err == nil {
+		t.Error("expected error for invalid value")
+	}
+}
+
+func TestConfig_SSHConfirmGrace(t *testing.T) {
+	cfg := &Config{}
+	val, err := cfg.Get("ssh-confirm-grace")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if val != "60" || cfg.SSHConfirmGrace() != time.Minute {
+		t.Errorf("expected default 60s, got %q / %v", val, cfg.SSHConfirmGrace())
+	}
+	if err := cfg.Set("ssh-confirm-grace", "0"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SSHConfirmGrace() != 0 {
+		t.Error("expected 0 to disable the grace period")
+	}
+	if err := cfg.Set("ssh-confirm-grace", "300"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SSHConfirmGrace() != 5*time.Minute {
+		t.Errorf("expected 5m, got %v", cfg.SSHConfirmGrace())
+	}
+	if err := cfg.Set("ssh-confirm-grace", "-1"); err == nil {
+		t.Error("expected error for negative value")
+	}
+	if err := cfg.Set("ssh-confirm-grace", "soon"); err == nil {
+		t.Error("expected error for non-numeric value")
 	}
 }

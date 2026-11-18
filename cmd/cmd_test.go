@@ -14,6 +14,8 @@ import (
 	"github.com/rogerio/passman/internal/agent"
 	"github.com/rogerio/passman/internal/clipboard"
 	"github.com/rogerio/passman/internal/crypto"
+	"github.com/rogerio/passman/internal/prompt"
+	psync "github.com/rogerio/passman/internal/sync"
 	"github.com/rogerio/passman/internal/vault"
 )
 
@@ -26,9 +28,15 @@ func setupTestApp(t *testing.T, input string) (*bytes.Buffer, *bytes.Buffer, *cl
 
 	app.VaultPath = filepath.Join(dir, "vault.enc")
 	app.SocketPath = ""
+	app.SSHSocketPath = ""
+	app.SSHUnlockVault = ""
+	app.AskpassPath = filepath.Join(dir, "askpass")
 	app.Out = out
 	app.ErrOut = errOut
 	app.Clipboard = mock
+	app.Prompter = &prompt.Mock{}
+	app.GUIPassword = false
+	app.TTYPath = os.DevNull
 	app.KDFParams = crypto.FastKDFParams()
 	app.Interactive = false
 	app.AutoStartAgent = false
@@ -50,6 +58,7 @@ func resetFlags() {
 	initCmd.Flags().Set("git", "false")
 	listCmd.Flags().Set("all", "false")
 	importCmd.Flags().Set("replace", "false")
+	sshAddCmd.Flags().Set("name", "")
 	rootCmd.PersistentFlags().Set("vault", "")
 	rootCmd.PersistentFlags().Lookup("vault").Changed = false
 }
@@ -875,6 +884,31 @@ func TestConfig_SetGit(t *testing.T) {
 	}
 }
 
+func TestConfig_SetGit_InitializesRepoForExistingVault(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	setupTestApp(t, "masterpass\nmasterpass\n")
+	_ = runCmd("vault", "init")
+	vaultDir := filepath.Dir(app.VaultPath)
+	if psync.IsRepo(vaultDir) {
+		t.Fatal("precondition: vault should not be a repo yet")
+	}
+
+	if err := runCmd("vault", "config", "git", "git@github.com:user/vault.git"); err != nil {
+		t.Fatalf("config set git: %v", err)
+	}
+
+	if !psync.IsRepo(vaultDir) {
+		t.Fatal("expected the vault directory to become a git repository")
+	}
+	out, _ := exec.Command("git", "-C", vaultDir, "remote", "get-url", "origin").Output()
+	if strings.TrimSpace(string(out)) != "git@github.com:user/vault.git" {
+		t.Errorf("remote not set, got %q", out)
+	}
+}
+
 // --- passwd tests ---
 
 func TestPasswd_Success(t *testing.T) {
@@ -1212,7 +1246,7 @@ func TestCacheInAgent_AutoStartDisabled_DoesNotSpawn(t *testing.T) {
 	app.AutoStartAgent = false
 
 	calls := 0
-	stubEnsureAgent(t, func(string) error {
+	stubEnsureAgent(t, func(string, string, string) error {
 		calls++
 		return nil
 	})
@@ -1230,7 +1264,7 @@ func TestCacheInAgent_AutoStartEnabled_SpawnsAgent(t *testing.T) {
 	app.AutoStartAgent = true
 
 	calls := 0
-	stubEnsureAgent(t, func(string) error {
+	stubEnsureAgent(t, func(string, string, string) error {
 		calls++
 		return errors.New("no agent")
 	})
@@ -1362,7 +1396,7 @@ func testSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "a.sock")
 }
 
-func stubEnsureAgent(t *testing.T, fn func(string) error) {
+func stubEnsureAgent(t *testing.T, fn func(string, string, string) error) {
 	t.Helper()
 	orig := ensureAgent
 	ensureAgent = fn

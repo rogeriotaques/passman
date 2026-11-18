@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
 )
 
@@ -82,7 +83,10 @@ func (c *Client) Lock() error {
 	return nil
 }
 
-func EnsureAgent(socketPath string) error {
+// EnsureAgent starts the background agent when it is not running. With a
+// non-empty sshSocketPath the agent also serves the SSH agent protocol there,
+// offering to unlock sshVault when a client asks for keys and none are loaded.
+func EnsureAgent(socketPath, sshSocketPath, sshVault string) error {
 	c := NewClient(socketPath)
 	if c.Ping() {
 		return nil
@@ -93,10 +97,17 @@ func EnsureAgent(socketPath string) error {
 		return fmt.Errorf("find executable: %w", err)
 	}
 
-	cmd := exec.Command(exe, "_agent", "--socket", socketPath)
+	args := []string{"_agent", "--socket", socketPath}
+	if sshSocketPath != "" {
+		args = append(args, "--ssh-socket", sshSocketPath, "--ssh-vault", sshVault)
+	}
+	cmd := exec.Command(exe, args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	// Detach from the terminal session so closing the tab that started the
+	// agent does not take SSH_AUTH_SOCK down with it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start agent: %w", err)
 	}

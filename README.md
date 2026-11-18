@@ -54,7 +54,12 @@ passman vault sync [--vault vault-name]
 # Change the vault password
 passman vault passwd [--vault vault-name]
 
-# Clear cached passwords from the agent
+# Use the vault as an SSH agent
+passman ssh add <private-key-file> [--name NAME]
+passman ssh list
+eval "$(passman ssh env)"      # SSH_AUTH_SOCK + SSH_ASKPASS, put it in your shell rc
+
+# Clear cached passwords and SSH keys from the agent
 passman lock
 
 # Permanently delete a vault (or all vaults)
@@ -93,6 +98,8 @@ mv passman /usr/local/bin/
 - Multiple named vaults
 - Case-insensitive entry lookup
 - Session caching via background agent
+- SSH agent — keys live in the vault, ssh gets signatures only, each approved by a dialog
+- SSH_ASKPASS helper — answers key passphrase prompts from the vault
 - Self-upgrading from source via `passman upgrade`
 - Single binary, no external dependencies at runtime
 
@@ -103,7 +110,8 @@ mv passman /usr/local/bin/
 - **Random generation**: `crypto/rand` (CSPRNG) for all randomness — salts, nonces, passwords
 - **File permissions**: Vault file created with `0600`, directories with `0700`
 - **Clipboard**: Auto-clears after 30 seconds
-- **Agent**: Unix socket with `0600` permissions, umask-protected creation
+- **Agent**: Unix sockets with `0600` permissions, umask-protected creation
+- **SSH**: private keys never leave the agent; every signature asks for approval by default
 - **Atomic writes**: vault written to temp file then renamed
 - **File locking**: advisory flock prevents concurrent writes
 - **Memory zeroing**: passwords, keys, and plaintext zeroed after use

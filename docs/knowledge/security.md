@@ -26,7 +26,40 @@
 - Socket created with `umask(0077)` — eliminates TOCTOU race on permissions
 - Passwords cached in memory with configurable TTL (default 15 minutes)
 - Passwords zeroed on expiry, lock, or agent shutdown
-- Agent auto-shuts down when all entries expire
+- Agent auto-shuts down when all entries expire, unless it can unlock a vault
+  on demand for SSH (then ssh must always find its socket)
+
+## Agent Lifecycle
+
+- `Stop` runs once (`sync.Once`), from the reaper, a signal (SIGINT/SIGTERM/
+  SIGHUP), or tests; it zeroes secrets and removes both sockets
+- `Start` returns only after `Stop` finished: the agent process exits as soon
+  as `Start` returns, and returning earlier left a stale `ssh-agent.sock`
+  behind (Go's listener `Close` unlinks only its own socket)
+- `ssh env` (shell startup) starts the agent when it is down; a failure is a
+  warning, never a broken shell
+
+## SSH Agent
+
+- Second Unix socket `~/.passman/ssh-agent.sock`, same umask protection
+- Keys are loaded from a vault only after it was unlocked by the user (a
+  successful `Store`) or through the on-demand unlock dialog
+- Private keys never cross the socket: clients get `List` and `Sign` only;
+  `Add`/`Remove`/`Lock` are rejected
+- Signatures ask for approval by default (`ssh-confirm on`); the dialog names
+  the requesting process (`LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux)
+  and the key. An approval is remembered for `ssh-confirm-grace` seconds
+  (default 60) keyed by the peer's executable path and the key fingerprint —
+  never by pid, never for unknown peers; a denial revokes it, lock/unload
+  clears it
+- On-demand unlock loads keys only — it never caches the master password, so
+  triggering the prompt cannot widen a client's access; prompts back off
+  exponentially after cancellations (10 s → 15 min) and can be disabled with
+  `ssh-unlock-prompt off`
+- Dialog text is passed to `osascript` as an argument, never interpolated into
+  the script (no AppleScript injection via key or process names)
+- `ssh add` reads at most 64 KiB and zeroes the file bytes and passphrase
+- `ssh askpass` never replays a vault passphrase for a "Bad passphrase" retry
 
 ## Memory Safety
 
@@ -61,6 +94,11 @@
 
 ## Git Sync
 
-- Only `vault.enc` (encrypted) is committed
+- Only `vault.enc` (encrypted) and `config.json` are committed; `.gitignore`
+  excludes `*.lock` and `*.tmp`
+- Vault commits are never GPG-signed (`-c commit.gpgsign=false`), so background
+  sync cannot hang on a passphrase prompt; `GIT_TERMINAL_PROMPT=0`
+- Branch is always `main`; `Sync` pushes first and only pulls (rebase) when
+  the push is rejected, so a routine sync costs one SSH connection
 - Master password never leaves the local machine
 - Remote only ever sees encrypted data
